@@ -294,7 +294,8 @@ function classOverviewDraw(body) {
   var card = function (v, l, sub, cls) { return '<div class="rounded-lg border border-gray-200 p-3"><div class="text-xs text-gray-500">' + l + '</div><div class="text-2xl font-bold ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="text-[11px] text-gray-500">' + sub + '</div>' : '') + '</div>'; };
   var h = '<div class="flex flex-wrap items-center gap-3 mb-3 text-sm"><label class="text-xs text-gray-500">Year <select id="co-year" class="border border-gray-300 rounded px-2 py-1 text-sm ml-1">' +
     yearList.map(function (y) { return '<option value="' + y + '"' + (Number(O.year) === y ? ' selected' : '') + '>' + academicYearLabel(y) + (y === currentAcademicYear() ? ' (this year)' : '') + '</option>'; }).join('') + '</select></label>' +
-    '<span class="text-xs text-gray-500">Official assessments only' + (O.excluded ? ' · ' + O.excluded + ' practice/archived left out' : '') + '.</span></div>';
+    '<span class="text-xs text-gray-500">Official assessments only' + (O.excluded ? ' · ' + O.excluded + ' practice/archived left out' : '') + '.</span>' +
+    '<button type="button" id="co-export" class="ml-auto px-3 py-1 rounded border border-gray-300 text-xs font-semibold" title="Download a spreadsheet of this class (names come from your browser, not Firebase)">Export CSV</button></div>';
   // Cards
   h += '<div class="grid grid-cols-2 md:grid-cols-' + (O.isGcse ? '6' : '4') + ' gap-2 mb-4">' +
     card(n, 'Students') +
@@ -357,6 +358,8 @@ function classOverviewDraw(body) {
   // Bind
   var yearSel = body.querySelector('#co-year');
   if (yearSel) yearSel.onchange = function () { classOverview.year = Number(yearSel.value); classOverviewRender(body, O.className, O.settings); };
+  var ex = body.querySelector('#co-export');
+  if (ex) ex.onclick = function () { classOverviewExport(O); };
   body.querySelectorAll('.co-attn-f').forEach(function (b) { b.onclick = function () { classOverview.attnFilter = b.dataset.k; classOverviewDraw(body); }; });
   body.querySelectorAll('.co-unit').forEach(function (b) { b.onclick = function () { classOverview.open[b.dataset.code] = !classOverview.open[b.dataset.code]; classOverviewDraw(body); }; });
   var ut = body.querySelector('.co-untaught');
@@ -372,4 +375,43 @@ function classOverviewDraw(body) {
       catch (e) { b.disabled = false; b.textContent = 'Could not assign: ' + (e && e.message || e); }
     };
   });
+}
+
+// ── Class export (CSV) ─────────────────────────────────────────────────────
+function classOverviewCsvRows(O) {
+  var areas = O.isGcse ? O.areas.filter(function (A) { return A.tested; }) : [];
+  var head = ['Name', 'Code', 'Average %', 'Trend', 'Done', 'Missed'];
+  if (O.isGcse) head = head.concat(['Working grade', 'Target', 'Gap', 'Paper 1 %', 'Paper 2 %']);
+  head = head.concat(['Latest DP', 'Last login', 'Needs attention']);
+  O.official.forEach(function (A) { head.push(A.title + ' %'); });
+  areas.forEach(function (A) { head.push(A.code + ' ' + A.title + ' %'); });
+  if (O.isGcse) head.push('Misconceptions');
+  var rows = [head];
+  O.students.forEach(function (s) {
+    var r = [s.name === s.code ? '' : s.name, s.code, s.avg == null ? '' : s.avg, s.trend.arrow === '–' ? '' : s.trend.label, s.done, s.missed.map(function (A) { return A.title; }).join('; ')];
+    if (O.isGcse) r = r.concat([s.grade == null ? '' : coGradeLabel(s.grade) + (s.gradeEst ? ' est.' : ''), s.target == null ? '' : coGradeLabel(s.target), s.gap == null ? '' : s.gap,
+      s.papers['1'] ? s.papers['1'].pct : '', s.papers['2'] ? s.papers['2'].pct : '']);
+    r = r.concat([s.dp == null ? '' : s.dp, s.lastSeen ? new Date(s.lastSeen).toLocaleDateString('en-GB') : 'never', s.why.map(function (w) { return w.t; }).join('; ')]);
+    O.official.forEach(function (A) {
+      var rec = A.recs[s.code];
+      r.push(!rec ? 'missing' : A.notSubmitted.indexOf(s.code) !== -1 ? 'not submitted' : (rec.maxScore ? Math.round(rec.score / rec.maxScore * 100) : ''));
+    });
+    areas.forEach(function (A) { var U = s.unit[A.code]; r.push(U ? coPct(U.a, U.p) : ''); });
+    if (O.isGcse) r.push(s.misc.join(' '));
+    rows.push(r);
+  });
+  return rows;
+}
+function classOverviewExport(O) {
+  var rows = classOverviewCsvRows(O);
+  var csv = rows.map(function (r) {
+    return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',');
+  }).join('\r\n');
+  var name = (O.className + ' ' + academicYearLabel(O.year) + ' overview.csv').replace(/[\/:*?"<>|]/g, '-');
+  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  classOverview.lastExport = { name: name, rows: rows };
 }

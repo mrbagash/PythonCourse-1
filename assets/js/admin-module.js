@@ -301,9 +301,12 @@ async function renderTeachersTab() {
   var rows = Object.keys(teachers).map(function(code) {
     var t = teachers[code];
     var permList = Object.keys(t.permissions||{}).filter(function(k){ return t.permissions[k]; }).join(', ') || 'none';
+    var cls = Object.keys(t.classes||{}).filter(function(k){ return t.classes[k]; });
+    var clsText = (t.permissions||{}).fullAdmin ? 'All (full admin)' : (cls.length ? cls.length + ' class' + (cls.length === 1 ? '' : 'es') : 'All (none assigned)');
     return '<tr class="border-b border-gray-100 hover:bg-gray-50">'
       + '<td class="py-2 px-3 font-mono text-sm font-semibold text-gray-800">'+escapeHtml(code)+'</td>'
       + '<td class="py-2 px-3 text-sm text-gray-600 max-w-xs truncate">'+escapeHtml(permList)+'</td>'
+      + '<td class="py-2 px-3 text-sm text-gray-600 teacher-classes-cell" title="'+escapeHtml(cls.join(', '))+'">'+escapeHtml(clsText)+'</td>'
       + '<td class="py-2 px-3 text-right space-x-2">'
       + '<button class="btn-teacher-edit text-xs text-blue-600 hover:underline" data-code="'+escapeHtml(code)+'">Edit</button>'
       + '<button class="btn-teacher-delete text-xs text-red-500 hover:underline" data-code="'+escapeHtml(code)+'">Delete</button>'
@@ -318,6 +321,7 @@ async function renderTeachersTab() {
     + (rows ? '<div class="overflow-x-auto"><table class="w-full text-left"><thead><tr>'
       + '<th class="py-2 px-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Code</th>'
       + '<th class="py-2 px-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Permissions</th>'
+      + '<th class="py-2 px-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Classes</th>'
       + '<th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
       : '<p class="text-gray-400 text-sm">No teacher accounts yet. Add one below.</p>')
     + '<div id="teacher-form-wrap" class="mt-4"></div>'
@@ -356,6 +360,10 @@ function showTeacherForm(code, teacherData) {
     + '<div class="mb-3"><span class="text-xs font-semibold text-gray-600 uppercase tracking-wide block mb-2">Permissions</span>'
     + buildPermissionCheckboxesHtml(perms)
     + '</div>'
+    + '<div class="mb-3"><span class="text-xs font-semibold text-gray-600 uppercase tracking-wide block mb-1">Classes this teacher sees</span>'
+    + '<p class="text-xs text-gray-500 mb-1">Tick their classes. None ticked = they see every class. Full admins always see every class.</p>'
+    + '<input id="tf-class-search" class="border border-gray-300 rounded px-2 py-1 text-sm mb-1 w-full max-w-xs" placeholder="Filter classes…">'
+    + '<div id="tf-classes" class="max-h-48 overflow-y-auto border border-gray-200 rounded bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 text-sm"><span class="text-gray-400 text-xs">Loading classes…</span></div></div>'
     + '<div class="flex gap-2">'
     + '<button id="tf-save" class="px-4 py-1.5 text-sm rounded font-semibold jhncc-primary">'+(isEdit?'Save changes':'Create account')+'</button>'
     + '<button onclick="document.getElementById(\'teacher-form-wrap\').innerHTML=\'\'" class="px-4 py-1.5 text-sm rounded border border-gray-300 text-gray-600 hover:bg-gray-100">Cancel</button>'
@@ -363,8 +371,21 @@ function showTeacherForm(code, teacherData) {
     + '<div id="tf-fb" class="mt-2 text-sm"></div>'
     + '</div>';
 
+  var assigned = (teacherData && teacherData.classes) || {};
+  getClassNames({ all: true }).then(function(all) {
+    var box = document.getElementById('tf-classes');
+    if (!box) return;
+    Object.keys(assigned).forEach(function(n) { if (assigned[n] && all.indexOf(n) === -1) all.push(n); });
+    box.innerHTML = all.length ? all.map(function(n) {
+      return '<label class="tf-class-row flex items-center gap-2 py-0.5" data-name="'+escapeHtml(n.toLowerCase())+'"><input type="checkbox" class="teacher-class-cb" value="'+escapeHtml(n)+'"'+(assigned[n] ? ' checked' : '')+'> '+escapeHtml(n)+'</label>';
+    }).join('') : '<span class="text-gray-400 text-xs">No classes yet.</span>';
+  }).catch(function() {});
+  document.getElementById('tf-class-search').oninput = function() {
+    var term = this.value.trim().toLowerCase();
+    wrap.querySelectorAll('.tf-class-row').forEach(function(r) { r.classList.toggle('hidden', !!term && r.dataset.name.indexOf(term) === -1); });
+  };
   document.getElementById('tf-save').onclick = async function() {
-    var saveCode = isEdit ? code : (document.getElementById('tf-code').value.trim().toUpperCase());
+    var saveCode = (isEdit ? String(code) : document.getElementById('tf-code').value).trim().toUpperCase();
     var fb = document.getElementById('tf-fb');
     if (!saveCode) { fb.className='text-red-500'; fb.textContent='Enter a login code.'; return; }
     if (!/^[A-Z0-9_-]{2,20}$/.test(saveCode)) { fb.className='text-red-500'; fb.textContent='Code must be 2–20 characters: letters, numbers, _ or -'; return; }
@@ -374,7 +395,13 @@ function showTeacherForm(code, teacherData) {
     });
     try {
       fb.className='text-gray-400'; fb.textContent='Saving…';
-      await state.db.ref('teachers/'+saveCode.toLowerCase()).set({ permissions: newPerms });
+      var newClasses = {};
+      wrap.querySelectorAll('.teacher-class-cb').forEach(function(cb) { if (cb.checked) newClasses[cb.value] = true; });
+      var tUpd = {};
+      tUpd['teachers/'+saveCode.toLowerCase()+'/permissions'] = newPerms;
+      tUpd['teachers/'+saveCode.toLowerCase()+'/classes'] = Object.keys(newClasses).length ? newClasses : null;
+      await state.db.ref().update(tUpd);
+      myClassScopeReset();
       fb.className='text-green-600'; fb.textContent='Saved!';
       setTimeout(function(){ renderTeachersTab(); }, 800);
     } catch(e) { fb.className='text-red-500'; fb.textContent='Error saving: '+e.message; }
@@ -1254,9 +1281,39 @@ function studentName(code) {
   return null;
 }
 
-// Returns sorted array of class name strings.
+// ── Teacher → classes ─────────────────────────────────────────────
+// teachers/{code}/classes/{className}: true. Admins and full-admin teachers see
+// every class; a teacher with no classes assigned yet also sees every class.
+// This is a view filter (it keeps lists short), not a security boundary.
+var myClassScopeCache = { key: null, at: 0, scope: null };
+function myClassScopeReset() { myClassScopeCache = { key: null, at: 0, scope: null }; }
+async function myClassScope() {
+  if (!state || !state.db || state.isAdmin || !state.isTeacher || !state.teacherCode) return null;
+  if (state.teacherPermissions && state.teacherPermissions.fullAdmin) return null;
+  var key = String(state.teacherCode).toLowerCase();
+  if (myClassScopeCache.key === key && Date.now() - myClassScopeCache.at < 60000) return myClassScopeCache.scope;
+  var scope = null;
+  try {
+    var snap = await state.db.ref('teachers/' + key + '/classes').get();
+    var v = snap.exists() ? (snap.val() || {}) : {};
+    var names = Object.keys(v).filter(function (k) { return v[k]; });
+    if (names.length) { scope = {}; names.forEach(function (n) { scope[n] = true; }); }
+  } catch (e) { scope = null; }
+  myClassScopeCache = { key: key, at: Date.now(), scope: scope };
+  return scope;
+}
+function inMyClassScope(scope, className) { return !scope || !!scope[className]; }
+
+// Returns sorted array of class name strings (only "my" classes for a teacher with classes assigned).
+// Pass { all: true } for every class (e.g. to check a name is unique).
+async function getClassNames(opts) {
+  var names = await getAllClassNames();
+  if (opts && opts.all) return names;
+  var scope = await myClassScope();
+  return scope ? names.filter(function (n) { return scope[n]; }) : names;
+}
 // Tries classNames index first (tiny); falls back to full classes read and backfills the index.
-async function getClassNames() {
+async function getAllClassNames() {
   var snap = await state.db.ref('classNames').get();
   if (snap.exists()) {
     return Object.keys(snap.val() || {}).sort();
@@ -2980,8 +3037,10 @@ async function loadClassroomManagementTab() {
   try {
     var snap = await state.db.ref('classes').get();
     var classes = [], archived = [];
+    var cmScope = await myClassScope();
     if (snap.exists()) {
       snap.forEach(function(child) {
+        if (!inMyClassScope(cmScope, child.key)) return;
         var codes = child.child('codes').val() || {};
         var rec = { name: child.key, count: Object.keys(codes).length };
         (child.child('archived').val() ? archived : classes).push(rec);
@@ -3660,9 +3719,11 @@ async function loadForceApTab() {
   classEl.innerHTML = '<option value="">Loading…</option>';
   try {
     var snap = await state.db.ref('classes').get();
+    var faScope = await myClassScope();
     classEl.innerHTML = '';
     if (snap.exists()) {
       snap.forEach(function(child) {
+        if (!inMyClassScope(faScope, child.key)) return;
         if (child.child('archived').val()) return;
         var o = document.createElement('option');
         o.value = child.key; o.textContent = child.key;
@@ -3946,6 +4007,7 @@ async function loadAccessTab() {
     }
 
     var classFilter = filterEl.value;
+    var accessScope = await myClassScope();
 
     // Build last-14-days key array (oldest → newest)
     var days14 = [];
@@ -3958,6 +4020,7 @@ async function loadAccessTab() {
     snap.forEach(function(child) {
       var data = child.val() || {};
       if (classFilter && data.className !== classFilter) return;
+      if (!inMyClassScope(accessScope, data.className)) return;
       students.push({ code: child.key, name: studentName(child.key) || child.key, className: data.className || '—', lastSeen: data.lastSeen || 0, days: data.days || {} });
     });
     students.sort(function(a, b) { return b.lastSeen - a.lastSeen; });

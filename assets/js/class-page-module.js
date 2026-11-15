@@ -449,7 +449,7 @@ async function classPageRenderSettings(body, className, settings) {
   var codes = codesSnap.exists() ? Object.keys(codesSnap.val() || {}) : [];
   codes.sort(function (a, b) { return ((typeof studentName === 'function' && studentName(a)) || a).localeCompare((typeof studentName === 'function' && studentName(b)) || b); });
   var linkSnap = await state.db.ref('classes/' + className + '/classroomCourseId').get();
-  var allNames = typeof getClassNames === 'function' ? await getClassNames() : [];
+  var allNames = typeof getClassNames === 'function' ? await getClassNames({ all: true }) : [];
   var type = settings.type || '';
   var yearGuess = typeof classYearGroup === 'function' ? classYearGroup(className) : null;
   var covered = settings.covered || {};
