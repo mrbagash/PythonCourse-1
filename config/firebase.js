@@ -10,6 +10,7 @@ window.PYLEARN_CONFIG = {
   },
   "googleClientId": "116392131413-3v6js8lrm2fj84tmnp1fog0ubefohf0o.apps.googleusercontent.com",
   "driveFolderId": "1R0Ejsu9WWcJ8C-ul0i4kiwUwShKl2bvo",
+  "codeSpreadsheetId": "1jajoMxMmZU-B9WICCSO85tJ7C0fsdw7BIA0_bRtK_pE",
   "quizSubmissionsFolderId": "1XokLPoYqitWj_tVUzx_VfFKVN-u9l6rQ",
-  "studentLookupUrl": "https://script.google.com/macros/s/AKfycbwB-DEBYozROrbI0MZ0sr_sV2KratDGiQUEYrED_3mrv0ZjVOVlwHzwz3AWjsbj_zzD/exec"
+  "studentLookupUrl": "https://script.google.com/macros/s/AKfycbxo82UqvyMJ1mKYnaZ6D7Yv3ooL_mHdm2ReQudSMJv-xEzMQadpZXGaX4vBZbiu_07l/exec"
 };

@@ -2208,6 +2208,7 @@ document.getElementById('btn-drive-import-close').onclick = function() {
 // ── Report ────────────────────────────────────────────────────
 // Classroom management: import Google Classroom rosters into one code workbook
 var CLASSROOM_CODE_SHEET_NAME = 'Classroom Student Codes';
+var CLASSROOM_UNGROUPED_CLASS = 'Ungrouped';
 var classroomState = { token: null, courses: [], oldCodeSheets: [] };
 var classroomDuplicateFixRollback = null;
 
@@ -2239,8 +2240,17 @@ function classroomApiHeaders() {
 async function classroomRequest(url, options) {
   var mergedHeaders = Object.assign({}, (options && options.headers) || {}, classroomApiHeaders());
   if (options && options.body) mergedHeaders['Content-Type'] = 'application/json';
-  var resp = await fetch(url, Object.assign({}, options || {}, { headers: mergedHeaders }));
-  var body = await resp.json().catch(function() { return {}; });
+  var resp, body;
+  // Google allows ~60 Sheets reads per minute per user. If we hit that (429),
+  // wait for the quota window to refill and try again instead of failing.
+  for (var attempt = 0; ; attempt++) {
+    resp = await fetch(url, Object.assign({}, options || {}, { headers: mergedHeaders }));
+    body = await resp.json().catch(function() { return {}; });
+    if (resp.status !== 429 || attempt >= 2) break;
+    var waitSec = 20 * (attempt + 1);
+    if (typeof classroomImportSetStatus === 'function') classroomImportSetStatus('Google is busy – waiting ' + waitSec + 's and retrying...');
+    await new Promise(function(r) { setTimeout(r, waitSec * 1000); });
+  }
   if (!resp.ok) {
     var msg = body && body.error && (body.error.message || body.error.status);
     throw new Error(msg || ('Google API error ' + resp.status));
@@ -2367,7 +2377,15 @@ function classroomClassFingerprint(value) {
 function classroomResolveClassFromExisting(course, oldCodes, classesVal, codeIndexVal) {
   var desired = classroomSafeSheetTitle(course.name || course.id);
   var classes = classesVal || {};
-  var names = Object.keys(classes);
+  var names = Object.keys(classes).filter(function(name) { return name !== CLASSROOM_UNGROUPED_CLASS; });
+
+  // A course imported before stays linked to the same class, so the class
+  // name (and its quiz history) never changes between imports.
+  var linked = names.find(function(name) {
+    return classes[name] && course.id && classes[name].classroomCourseId === course.id;
+  });
+  if (linked) return linked;
+
   var oldCodeSet = {};
   Object.keys(oldCodes || {}).forEach(function(key) {
     var code = oldCodes[key];
@@ -2385,7 +2403,7 @@ function classroomResolveClassFromExisting(course, oldCodes, classesVal, codeInd
   Object.keys(oldCodeSet).forEach(function(lower) {
     var idx = codeIndexVal && codeIndexVal[lower];
     var className = idx && (idx.className || (typeof idx === 'string' ? idx : ''));
-    if (className) scores[className] = (scores[className] || 0) + 1;
+    if (className && className !== CLASSROOM_UNGROUPED_CLASS) scores[className] = (scores[className] || 0) + 1;
   });
   var scored = Object.keys(scores).map(function(name) {
     return { name: name, score: scores[name] || 0 };
@@ -2762,7 +2780,27 @@ async function rollbackClassroomDuplicateFix() {
   }
 }
 
+// The workbook is pinned by ID (config.codeSpreadsheetId) so the app always uses
+// that exact file, even if another sheet with the same name exists.
+function classroomPinnedSpreadsheetId() {
+  return state.config && state.config.codeSpreadsheetId ? String(state.config.codeSpreadsheetId).trim() : '';
+}
+
+async function classroomGetPinnedSpreadsheet(id) {
+  var file;
+  try {
+    file = await classroomRequest('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+      '?fields=id,name,trashed&supportsAllDrives=true');
+  } catch(e) {
+    throw new Error('Could not open the class code spreadsheet (' + e.message + '). Check you are signed in with the account that owns it.');
+  }
+  if (file.trashed) throw new Error('The class code spreadsheet is in the Drive bin. Restore it first.');
+  return file;
+}
+
 async function classroomFindOrCreateCodeSpreadsheet() {
+  var pinned = classroomPinnedSpreadsheetId();
+  if (pinned) return classroomGetPinnedSpreadsheet(pinned); // never create a new one when pinned
   var folderId = state.config && state.config.driveFolderId ? String(state.config.driveFolderId).trim() : '';
   var escapedName = CLASSROOM_CODE_SHEET_NAME.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   var qParts = ["mimeType='application/vnd.google-apps.spreadsheet'", "name='" + escapedName + "'", 'trashed=false'];
@@ -2780,6 +2818,8 @@ async function classroomFindOrCreateCodeSpreadsheet() {
 }
 
 async function classroomFindCodeSpreadsheetOnly() {
+  var pinned = classroomPinnedSpreadsheetId();
+  if (pinned) return classroomGetPinnedSpreadsheet(pinned);
   var folderId = state.config && state.config.driveFolderId ? String(state.config.driveFolderId).trim() : '';
   var escapedName = CLASSROOM_CODE_SHEET_NAME.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   var qParts = ["mimeType='application/vnd.google-apps.spreadsheet'", "name='" + escapedName + "'", 'trashed=false'];
@@ -2849,6 +2889,29 @@ async function classroomEnsureSheets(spreadsheetId, titles) {
       body: JSON.stringify({ requests: requests })
     });
   }
+}
+
+// Deletes the named tabs if they have no student rows (e.g. the default "Sheet1"
+// or a class everyone moved out of). Never deletes Ungrouped or the last tab.
+async function classroomRemoveEmptyTabs(spreadsheetId, titles) {
+  var metadata = await classroomSpreadsheetMetadata(spreadsheetId);
+  var props = (metadata.sheets || []).map(function(s) { return s.properties || {}; });
+  var candidates = props.filter(function(p) { return titles[p.title] && p.title !== CLASSROOM_UNGROUPED_CLASS; });
+  if (!candidates.length) return;
+  var valueRanges = await classroomBatchReadValues(spreadsheetId, candidates.map(function(p) {
+    // Class tabs: empty = header only. "Sheet1": must be completely blank.
+    return classroomQuoteSheet(p.title) + (p.title === 'Sheet1' ? '!A1:Z20' : '!A2:D3');
+  }));
+  var empty = candidates.filter(function(p, i) {
+    var rows = (valueRanges[i] && valueRanges[i].values) || [];
+    return !rows.some(function(r) { return r.some(function(c) { return String(c || '').trim(); }); });
+  });
+  if (empty.length >= props.length) empty = empty.slice(0, props.length - 1);
+  if (!empty.length) return;
+  await classroomRequest('https://sheets.googleapis.com/v4/spreadsheets/' + encodeURIComponent(spreadsheetId) + ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({ requests: empty.map(function(p) { return { deleteSheet: { sheetId: p.sheetId } }; }) })
+  });
 }
 
 async function classroomReadConsolidatedRecords(spreadsheetId) {
@@ -2992,9 +3055,14 @@ async function autoSyncNamesFromClassroomSheet(options) {
     if (!spreadsheet) return { imported: 0, missing: true };
     var metadata = await classroomSpreadsheetMetadata(spreadsheet.id);
     var imported = 0;
-    for (var i = 0; i < (metadata.sheets || []).length; i++) {
-      var title = metadata.sheets[i].properties.title;
-      var rows = await classroomReadValues(spreadsheet.id, classroomQuoteSheet(title) + '!A2:D1000');
+    // One batched read for every tab (was one read per tab, which hit the
+    // Sheets "read requests per minute" quota with many classes).
+    var titles = (metadata.sheets || []).map(function(s) { return s.properties.title; });
+    var valueRanges = await classroomBatchReadValues(spreadsheet.id, titles.map(function(title) {
+      return classroomQuoteSheet(title) + '!A2:D1000';
+    }));
+    for (var i = 0; i < titles.length; i++) {
+      var rows = (valueRanges[i] && valueRanges[i].values) || [];
       rows.forEach(function(row) {
         var first = String(row[1] || '').trim();
         var last = String(row[2] || '').trim();
@@ -3084,7 +3152,7 @@ async function openClassroomImportModal() {
   classroomImportSetStatus('');
   try {
     await getClassroomToken();
-    startClassroomNameSync({ silent: true, force: true });
+    // (No name sync here – the import refreshes names when it finishes.)
     classroomImportSetStatus('Loading Classroom classes and old code sheets...');
     var results = await Promise.all([classroomListCourses(), classroomLoadOldCodeSheets()]);
     classroomState.courses = results[0];
@@ -3129,6 +3197,8 @@ async function importSelectedClassroomClasses() {
       var rec = existing.byCodeLower[lower];
       if (rec && rec.code) allExistingCodes.add(rec.code);
     });
+    // Also avoid codes that exist only in Firebase (e.g. made manually).
+    Object.keys(codeIndexVal).forEach(function(lower) { allExistingCodes.add(lower.toLowerCase()); });
 
     for (var s = 0; s < selected.length; s++) {
       var idx = Number(selected[s].dataset.idx);
@@ -3144,6 +3214,25 @@ async function importSelectedClassroomClasses() {
       importedCourseData.push({ course: course, students: students, oldCodes: oldCodes, className: resolvedClassName, sourceClasses: sourceClasses });
     }
 
+    // One student = one code. If a student is on more than one selected course,
+    // keep them in the first one (list order) and report it.
+    var keptInClass = {};
+    var multiCourseNotes = [];
+    importedCourseData.forEach(function(item) {
+      var className = item.className || classroomSafeSheetTitle(item.course.name || item.course.id);
+      item.students = item.students.filter(function(student) {
+        if (keptInClass[student.email]) {
+          if (keptInClass[student.email] !== className) {
+            multiCourseNotes.push(((student.firstName + ' ' + student.lastName).trim() || student.email) +
+              ' (kept in ' + keptInClass[student.email] + ', not added to ' + className + ')');
+          }
+          return false;
+        }
+        keptInClass[student.email] = className;
+        return true;
+      });
+    });
+
     var movingEmails = {};
     importedCourseData.forEach(function(item) {
       item.students.forEach(function(student) { movingEmails[student.email] = true; });
@@ -3158,12 +3247,52 @@ async function importSelectedClassroomClasses() {
     var writeClasses = {};
     var movedFromClasses = {};
     var duplicateClassesToDelete = {};
+    var classRows = {};          // className -> rows written this import
+    var leaversByClass = {};     // className -> sheet records no longer on its roster
+    var skippedEmptyRosters = [];
+    var keepByClass = {};        // className -> records kept because Classroom returned an empty roster
+
+    // Students who were in an imported class but are no longer on its Classroom
+    // roster (and aren't in any other selected course).
+    importedCourseData.forEach(function(item) {
+      var className = item.className || classroomSafeSheetTitle(item.course.name || item.course.id);
+      if (className === CLASSROOM_UNGROUPED_CLASS || leaversByClass[className]) return;
+      var remaining = existing.byClass[className] || [];
+      var rosterSize = importedCourseData.filter(function(other) {
+        return (other.className || classroomSafeSheetTitle(other.course.name || other.course.id)) === className;
+      }).reduce(function(n, other) { return n + other.students.length; }, 0);
+      // Safety: an empty roster usually means Classroom returned nothing – never empty a class because of it.
+      if (!rosterSize && remaining.length) {
+        skippedEmptyRosters.push(className);
+        leaversByClass[className] = [];
+        keepByClass[className] = remaining.slice(); // rewrite the tab with them still in it
+        return;
+      }
+      leaversByClass[className] = remaining.slice();
+    });
+    var allLeavers = [];
+    Object.keys(leaversByClass).forEach(function(cn) {
+      leaversByClass[cn].forEach(function(rec) { allLeavers.push({ rec: rec, from: cn }); });
+    });
+    var ungroupLeavers = true;
+    if (allLeavers.length) {
+      var preview = allLeavers.slice(0, 15).map(function(x) {
+        return '• ' + ((x.rec.firstName + ' ' + x.rec.lastName).trim() || x.rec.email) + ' (' + x.from + ')';
+      }).join('\n') + (allLeavers.length > 15 ? '\n…and ' + (allLeavers.length - 15) + ' more' : '');
+      ungroupLeavers = confirm(
+        allLeavers.length + ' student' + (allLeavers.length === 1 ? ' is' : 's are') +
+        ' no longer in these Google Classroom classes:\n\n' + preview +
+        '\n\nOK = move them to "' + CLASSROOM_UNGROUPED_CLASS + '" (they keep their code and progress)\n' +
+        'Cancel = leave them in their current class'
+      );
+    }
 
     importedCourseData.forEach(function(item) {
       var className = item.className || classroomSafeSheetTitle(item.course.name || item.course.id);
       writeClasses[className] = true;
       if (className !== classroomSafeSheetTitle(item.course.name || item.course.id)) duplicateClassesToDelete[classroomSafeSheetTitle(item.course.name || item.course.id)] = true;
-      var rows = [];
+      if (item.course.id) firebaseUpdates['classes/' + className + '/classroomCourseId'] = item.course.id;
+      var rows = classRows[className] || (classRows[className] = []);
       item.students.forEach(function(student) {
         var existingRec = existing.byEmail[student.email];
         var key = classroomNameKey(student.firstName, student.lastName);
@@ -3191,7 +3320,32 @@ async function importSelectedClassroomClasses() {
         firebaseUpdates['studentCodes/' + code] = { className: className, indexedAt: now };
         firebaseUpdates['classNames/' + className] = true;
       });
-      existing.byClass[className] = rows;
+    });
+
+    var ungroupedCount = 0;
+    Object.keys(classRows).forEach(function(className) {
+      var leavers = leaversByClass[className] || [];
+      if (keepByClass[className]) {
+        existing.byClass[className] = classRows[className].concat(keepByClass[className]);
+        return;
+      }
+      if (!ungroupLeavers) {
+        existing.byClass[className] = classRows[className].concat(leavers);
+        return;
+      }
+      existing.byClass[className] = classRows[className];
+      if (!leavers.length) return;
+      var ungrouped = existing.byClass[CLASSROOM_UNGROUPED_CLASS] || (existing.byClass[CLASSROOM_UNGROUPED_CLASS] = []);
+      leavers.forEach(function(rec) {
+        ungrouped.push(Object.assign({}, rec, { className: CLASSROOM_UNGROUPED_CLASS }));
+        firebaseUpdates['classes/' + className + '/codes/' + rec.code] = null;
+        firebaseUpdates['classes/' + CLASSROOM_UNGROUPED_CLASS + '/codes/' + rec.code] = { createdAt: now, ungroupedAt: now, ungroupedFrom: className };
+        firebaseUpdates['codeIndex/' + rec.code.toLowerCase()] = { className: CLASSROOM_UNGROUPED_CLASS, storedCode: rec.code };
+        firebaseUpdates['studentCodes/' + rec.code] = { className: CLASSROOM_UNGROUPED_CLASS, indexedAt: now };
+        ungroupedCount++;
+      });
+      firebaseUpdates['classNames/' + CLASSROOM_UNGROUPED_CLASS] = true;
+      writeClasses[CLASSROOM_UNGROUPED_CLASS] = true;
     });
 
     await classroomEnsureSheets(spreadsheet.id, Object.keys(writeClasses));
@@ -3217,7 +3371,14 @@ async function importSelectedClassroomClasses() {
     await state.db.ref().update(firebaseUpdates);
     await classroomRemoveEmptyClassIndexes(movedFromClasses);
     await Promise.all(Object.keys(duplicateClassesToDelete).map(classroomDeleteClassIfEmpty));
-    classroomImportSetStatus('Imported ' + importedCourseData.length + ' class' + (importedCourseData.length !== 1 ? 'es' : '') + '. Preserved ' + preserved + ' code' + (preserved !== 1 ? 's' : '') + ', generated ' + generated + ', moved ' + moved + '.', false);
+    var tidyTabs = Object.assign({ Sheet1: true }, movedFromClasses);
+    await classroomRemoveEmptyTabs(spreadsheet.id, tidyTabs).catch(function() {});
+    var summary = 'Imported ' + importedCourseData.length + ' class' + (importedCourseData.length !== 1 ? 'es' : '') +
+      '. Preserved ' + preserved + ' code' + (preserved !== 1 ? 's' : '') + ', generated ' + generated + ', moved ' + moved +
+      ', ungrouped ' + ungroupedCount + '.';
+    if (multiCourseNotes.length) summary += ' ' + multiCourseNotes.length + ' student' + (multiCourseNotes.length === 1 ? ' was' : 's were') + ' in more than one class: ' + multiCourseNotes.join('; ') + '.';
+    if (skippedEmptyRosters.length) summary += ' Classroom returned no students for ' + skippedEmptyRosters.join(', ') + ', so nobody was removed from ' + (skippedEmptyRosters.length === 1 ? 'it' : 'them') + '.';
+    classroomImportSetStatus(summary, false);
     await loadClassroomManagementTab();
     await refreshAdminTable();
   } catch(e) {

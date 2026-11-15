@@ -196,6 +196,8 @@ async function getGoogleStudentEmail() {
 }
 
 async function findGoogleCodeSpreadsheet() {
+  var pinnedId = state.config && state.config.codeSpreadsheetId;
+  if (pinnedId) return { id: String(pinnedId).trim(), name: GOOGLE_STUDENT_SHEET_NAME };
   var folderId = state.config && state.config.driveFolderId;
   if (!folderId) throw new Error('No Drive folder ID is configured for student code lookup.');
   var sheetName = (state.config && state.config.googleStudentSpreadsheetName) || GOOGLE_STUDENT_SHEET_NAME;

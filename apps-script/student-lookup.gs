@@ -27,7 +27,8 @@
  *  Version: "New version" → Deploy. The URL stays the same.
  */
 
-var FOLDER_ID  = '1R0Ejsu9WWcJ8C-ul0i4kiwUwShKl2bvo';   // "Course Website" folder
+var SHEET_ID   = '1jajoMxMmZU-B9WICCSO85tJ7C0fsdw7BIA0_bRtK_pE'; // the "Classroom Student Codes" workbook
+var FOLDER_ID  = '1R0Ejsu9WWcJ8C-ul0i4kiwUwShKl2bvo';   // fallback search if SHEET_ID is blank
 var SHEET_NAME = 'Classroom Student Codes';
 var CLIENT_ID  = '116392131413-3v6js8lrm2fj84tmnp1fog0ubefohf0o.apps.googleusercontent.com';
 var DOMAIN     = 'jhncc.org';                           // only these accounts may use it
@@ -99,9 +100,14 @@ function loadRows_() {
   var hit = cache.get('rows_v1');
   if (hit) return JSON.parse(hit);
 
-  var files = DriveApp.getFolderById(FOLDER_ID).getFilesByName(SHEET_NAME);
-  if (!files.hasNext()) throw new Error('sheet_not_found');
-  var ss = SpreadsheetApp.openById(files.next().getId());
+  var ss;
+  if (SHEET_ID) {
+    try { ss = SpreadsheetApp.openById(SHEET_ID); } catch (e) { throw new Error('sheet_not_found'); }
+  } else {
+    var files = DriveApp.getFolderById(FOLDER_ID).getFilesByName(SHEET_NAME);
+    if (!files.hasNext()) throw new Error('sheet_not_found');
+    ss = SpreadsheetApp.openById(files.next().getId());
+  }
 
   var data = { byEmail: {}, byClass: {} };
   ss.getSheets().forEach(function (sheet) {

@@ -153,7 +153,7 @@ function genUniqueCodes(count, existingSet) {
   while (codes.length < count && tries < maxTries) {
     tries++;
     var c = genCodeCandidate();
-    if (!used.has(c)) {
+    if (!used.has(c) && !used.has(c.toLowerCase())) {
       used.add(c);
       codes.push(c);
     }
