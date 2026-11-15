@@ -31,7 +31,7 @@ function assessmentIsPractice(id, flags) {
   var a = typeof ASSESSMENTS !== 'undefined' ? ASSESSMENTS[id] : null;
   return /practice/i.test(String(id) + ' ' + ((a && a.title) || ''));
 }
-var classPage = { className: '', tab: 'settings', cache: {} };
+var classPage = { className: '', tab: null, cache: {} };
 
 function cpEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function cpKey(code) { return String(code).replace(/\./g, '_'); }
@@ -227,7 +227,7 @@ document.addEventListener('click', function (e) {
 async function openClassPage(className, tab) {
   if (!className) return;
   classPage.className = className;
-  classPage.tab = tab || classPage.tab || 'settings';
+  classPage.tab = tab || null;   // default: first tab (or Settings if the type isn't set yet)
   var modal = document.getElementById('modal-class-page');
   modal.classList.remove('hidden');
   document.getElementById('class-page-close').onclick = function () { modal.classList.add('hidden'); };
@@ -237,8 +237,9 @@ async function openClassPage(className, tab) {
 async function classPageRender() {
   var className = classPage.className;
   var settings = await classSettings(className, true);
-  var tabs = [['settings', 'Settings']];
-  if (settings.type === 'gcse' && typeof classProgressRender === 'function') tabs.unshift(['progress', 'Class progress']);
+  var tabs = [['assessments', 'Assessments'], ['settings', 'Settings']];
+  if (typeof classOverviewRender === 'function') tabs.unshift(['overview', 'Overview']);
+  if (!classPage.tab) classPage.tab = settings.type ? tabs[0][0] : 'settings';
   if (!tabs.some(function (t) { return t[0] === classPage.tab; })) classPage.tab = tabs[0][0];
   var tabsEl = document.getElementById('class-page-tabs');
   tabsEl.innerHTML = tabs.map(function (t) {
@@ -247,8 +248,199 @@ async function classPageRender() {
   }).join('') + '<span class="text-xs px-2 py-0.5 rounded-full self-center ' + classTypeStyle(settings.type) + '">' + classTypeLabel(settings.type) + '</span>';
   tabsEl.querySelectorAll('.cp-tab').forEach(function (b) { b.onclick = function () { classPage.tab = b.dataset.tab; classPageRender(); }; });
   var body = document.getElementById('class-page-body');
-  if (classPage.tab === 'progress') return classProgressRender(body, className, settings);
+  if (classPage.tab === 'overview') return classOverviewRender(body, className, settings);
+  if (classPage.tab === 'assessments') return classAssessmentsRender(body, className, settings);
   return classPageRenderSettings(body, className, settings);
+}
+
+// ── Shared: every assessment result for a class's current students ──────────
+// { codes, recs: {code: {assessmentId: rec}}, flags }. GCSE tests use the canonical (teacher) results.
+async function classAssessmentData(className) {
+  var codesSnap = await state.db.ref('classes/' + className + '/codes').get();
+  var codes = codesSnap.exists() ? Object.keys(codesSnap.val() || {}) : [];
+  var paper = typeof gcseLoadPaperTestsForClass === 'function' ? await gcseLoadPaperTestsForClass(className) : { results: {} };
+  var flags = await loadAssessmentFlags(className);
+  var recs = {};
+  await Promise.all(codes.map(async function (code) {
+    var snap = await state.db.ref('progress/' + code + '/assessments').get();
+    var all = snap.exists() ? (snap.val() || {}) : {};
+    var mine = {};
+    Object.keys(all).forEach(function (id) {
+      var r = all[id];
+      if (!r) return;
+      var latest = r;
+      if (r.attempts) {   // retakes: the latest attempt counts
+        Object.keys(r.attempts).forEach(function (k) { var a = r.attempts[k]; if (a && a.completedAt && (!latest.completedAt || a.completedAt > latest.completedAt)) latest = Object.assign({}, a); });
+      }
+      if (!latest.completedAt || latest.pending) return;
+      var target = (typeof ASSESSMENTS !== 'undefined' && ASSESSMENTS[id] && ASSESSMENTS[id].legacyOf) || id;
+      mine[target] = latest;
+    });
+    Object.keys(paper.results || {}).forEach(function (id) { if (paper.results[id][code]) mine[id] = paper.results[id][code]; });
+    recs[code] = mine;
+  }));
+  return { codes: codes, recs: recs, flags: flags };
+}
+// Joined but answered nothing (score 0, no marks anywhere) – kept out of averages.
+function resultNotSubmitted(rec) {
+  if (!rec || typeof rec.score !== 'number' || rec.score !== 0) return false;
+  var rubric = rec.rubric || [];
+  return !rubric.length || rubric.every(function (c) { return !c.awarded && c.attempted !== true; });
+}
+function assessmentTitle(id, rec) {
+  return (typeof ASSESSMENTS !== 'undefined' && ASSESSMENTS[id] && ASSESSMENTS[id].title) || (rec && rec.title) || id;
+}
+function assessmentKind(id) {
+  var t = typeof gcse !== 'undefined' && gcse.tests ? gcse.tests[id] : null;
+  if (t) return t.kind === 'eou' ? 'End of unit' : t.kind === 'mock' ? 'Mock' : 'GCSE test';
+  return 'AP';
+}
+// Per-assessment summary for one academic year (or 'all').
+function classAssessmentSummaries(data, year) {
+  var byId = {};
+  data.codes.forEach(function (code) {
+    var mine = data.recs[code] || {};
+    Object.keys(mine).forEach(function (id) {
+      var rec = mine[id];
+      if (year !== 'all' && academicYearStart(rec.completedAt) !== Number(year)) return;
+      var S = byId[id] || (byId[id] = { id: id, title: assessmentTitle(id, rec), recs: {}, notSubmitted: [], last: 0 });
+      S.recs[code] = rec;
+      S.last = Math.max(S.last, rec.completedAt || 0);
+      if (resultNotSubmitted(rec)) S.notSubmitted.push(code);
+    });
+  });
+  return Object.keys(byId).map(function (id) {
+    var S = byId[id];
+    var counted = Object.keys(S.recs).filter(function (c) { return S.notSubmitted.indexOf(c) === -1; });
+    var pcts = counted.map(function (c) { var r = S.recs[c]; return r.maxScore ? r.score / r.maxScore * 100 : null; }).filter(function (v) { return v != null; });
+    S.avg = pcts.length ? Math.round(pcts.reduce(function (a, b) { return a + b; }, 0) / pcts.length) : null;
+    var dps = counted.map(function (c) { return S.recs[c].dp; }).filter(function (v) { return v != null; });
+    if (!dps.length && typeof definitePurposeGrades === 'function' && counted.length) {
+      var scores = counted.map(function (c) { return Number(S.recs[c].score) || 0; }).sort(function (a, b) { return b - a; });
+      dps = definitePurposeGrades(scores);
+    }
+    S.dpAvg = dps.length ? (dps.reduce(function (a, b) { return a + Number(b); }, 0) / dps.length).toFixed(1) : null;
+    S.missing = data.codes.filter(function (c) { return !S.recs[c]; });
+    S.done = data.codes.length - S.missing.length;
+    S.kind = assessmentKind(id);
+    S.practice = assessmentIsPractice(id, data.flags);
+    S.archived = assessmentIsArchived(id, data.flags);
+    return S;
+  }).sort(function (a, b) { return b.last - a.last; });
+}
+
+// ── Class page → Assessments tab ────────────────────────────────────────────
+async function classAssessmentsRender(body, className) {
+  body.innerHTML = '<p class="text-gray-400 text-sm">Loading assessments…</p>';
+  var data = await classAssessmentData(className);
+  classPage.assessData = data;
+  if (classPage.assessYear == null) classPage.assessYear = currentAcademicYear();
+  var years = {}; years[currentAcademicYear()] = true;
+  data.codes.forEach(function (c) { Object.keys(data.recs[c] || {}).forEach(function (id) { years[academicYearStart(data.recs[c][id].completedAt)] = true; }); });
+  var yearList = Object.keys(years).map(Number).sort(function (a, b) { return b - a; });
+  var all = classAssessmentSummaries(data, classPage.assessYear);
+  var shown = all.filter(function (S) { return classPage.assessShowArchived || !S.archived; });
+  var hiddenArchived = all.length - shown.length;
+  var olderYears = yearList.filter(function (y) { return y < currentAcademicYear(); });
+  var h = '<div class="flex flex-wrap items-center gap-3 mb-3 text-sm"><label class="text-xs text-gray-500">Year <select id="cpa-year" class="border border-gray-300 rounded px-2 py-1 text-sm ml-1">' +
+    yearList.map(function (y) { return '<option value="' + y + '"' + (String(classPage.assessYear) === String(y) ? ' selected' : '') + '>' + academicYearLabel(y) + (y === currentAcademicYear() ? ' (this year)' : '') + '</option>'; }).join('') +
+    '<option value="all"' + (classPage.assessYear === 'all' ? ' selected' : '') + '>All years</option></select></label>' +
+    '<label class="flex items-center gap-1.5 text-xs text-gray-600"><input type="checkbox" id="cpa-show-archived"' + (classPage.assessShowArchived ? ' checked' : '') + '> Show archived' + (hiddenArchived ? ' (' + hiddenArchived + ')' : '') + '</label>' +
+    olderYears.map(function (y) { return '<button type="button" class="cpa-archive-year px-2 py-1 rounded border border-gray-300 text-xs" data-year="' + y + '">Archive all from ' + academicYearLabel(y) + '</button>'; }).join('') +
+    '<span id="cpa-status" class="text-xs text-gray-500"></span></div>';
+  if (!shown.length) {
+    h += '<p class="text-sm text-gray-500 py-6 text-center">No assessments for this class in ' + (classPage.assessYear === 'all' ? 'any year' : academicYearLabel(classPage.assessYear)) + '.</p>';
+    body.innerHTML = h; classAssessmentsBind(body, className, all, data); return;
+  }
+  h += '<div class="border border-gray-200 rounded-lg overflow-hidden"><table class="w-full text-sm"><tr class="bg-gray-50 text-left text-xs text-gray-500"><th class="p-2">Assessment</th><th class="p-2">Type</th><th class="p-2 text-center">Done</th><th class="p-2 text-center">Average</th><th class="p-2 text-center">DP avg</th><th class="p-2">Counts as</th><th class="p-2"></th></tr>';
+  shown.forEach(function (S, i) {
+    var ragStyle = S.avg == null ? '' : (S.avg >= 70 ? 'background:#dcfce7;color:#166534' : S.avg >= 40 ? 'background:#fef3c7;color:#92400e' : 'background:#fee2e2;color:#991b1b');
+    h += '<tr class="border-t ' + (S.archived ? 'opacity-60' : '') + '"><td class="p-2"><div class="font-semibold">' + cpEsc(S.title) + '</div><div class="text-xs text-gray-500">' + (S.last ? new Date(S.last).toLocaleDateString('en-GB') : '') + (S.archived ? ' · archived' : '') + '</div></td>' +
+      '<td class="p-2 text-xs">' + cpEsc(S.kind) + '</td>' +
+      '<td class="p-2 text-center"><button type="button" class="cpa-done underline decoration-dotted ' + (S.missing.length ? 'text-amber-700' : 'text-green-700') + '" data-i="' + i + '">' + S.done + '/' + data.codes.length + '</button>' +
+        (S.notSubmitted.length ? '<div class="text-[11px] text-gray-500">' + S.notSubmitted.length + ' not submitted</div>' : '') + '</td>' +
+      '<td class="p-2 text-center">' + (S.avg == null ? '–' : '<span class="px-1.5 rounded text-xs font-bold" style="' + ragStyle + '">' + S.avg + '%</span>') + '</td>' +
+      '<td class="p-2 text-center">' + (S.dpAvg || '–') + '</td>' +
+      '<td class="p-2"><select class="cpa-practice border border-gray-300 rounded px-1 py-0.5 text-xs" data-id="' + cpEsc(S.id) + '"><option value="official"' + (S.practice ? '' : ' selected') + '>Official</option><option value="practice"' + (S.practice ? ' selected' : '') + '>Practice</option></select></td>' +
+      '<td class="p-2 text-right whitespace-nowrap"><button type="button" class="cpa-open px-2 py-0.5 rounded border border-gray-300 text-xs" data-id="' + cpEsc(S.id) + '">Open</button> ' +
+        '<button type="button" class="cpa-archive px-2 py-0.5 rounded border border-gray-300 text-xs" data-id="' + cpEsc(S.id) + '" data-on="' + (S.archived ? '0' : '1') + '">' + (S.archived ? 'Unarchive' : 'Archive') + '</button></td></tr>' +
+      '<tr class="cpa-missing hidden" data-i="' + i + '"><td colspan="7" class="p-2 bg-amber-50 text-sm"></td></tr>';
+  });
+  h += '</table></div><p class="text-xs text-gray-500 mt-2">Practice assessments still show here but are left out of averages, trends, DP and "needs attention". "Not submitted" (joined but answered nothing) is left out of averages. Retakes: the latest attempt counts.</p>';
+  body.innerHTML = h;
+  classAssessmentsBind(body, className, shown, data);
+}
+function classAssessmentsBind(body, className, list, data) {
+  var status = function (m) { var el = document.getElementById('cpa-status'); if (el) el.textContent = m; };
+  var rerender = function () { classAssessmentsRender(body, className); };
+  var setFlag = async function (ids, patch) {
+    var updates = {};
+    ids.forEach(function (id) {
+      var k = 'classes/' + className + '/assessmentFlags/' + assessmentFlagKey(id);
+      Object.keys(patch).forEach(function (f) { updates[k + '/' + f] = patch[f]; });
+      updates[k + '/at'] = Date.now();
+    });
+    await state.db.ref().update(updates);
+  };
+  document.getElementById('cpa-year').onchange = function () { classPage.assessYear = this.value === 'all' ? 'all' : Number(this.value); rerender(); };
+  document.getElementById('cpa-show-archived').onchange = function () { classPage.assessShowArchived = this.checked; rerender(); };
+  body.querySelectorAll('.cpa-archive-year').forEach(function (b) {
+    b.onclick = async function () {
+      var y = Number(b.dataset.year);
+      var ids = classAssessmentSummaries(data, y).filter(function (S) { return !S.archived; }).map(function (S) { return S.id; });
+      if (!ids.length) { status('Nothing left to archive from ' + academicYearLabel(y) + '.'); return; }
+      if (!confirm('Archive ' + ids.length + ' assessment' + (ids.length === 1 ? '' : 's') + ' from ' + academicYearLabel(y) + ' for this class? Nothing is deleted.')) return;
+      await setFlag(ids, { archived: true }); rerender();
+    };
+  });
+  body.querySelectorAll('.cpa-archive').forEach(function (b) {
+    b.onclick = async function () { await setFlag([b.dataset.id], { archived: b.dataset.on === '1' ? true : null }); rerender(); };
+  });
+  body.querySelectorAll('.cpa-practice').forEach(function (sel) {
+    sel.onchange = async function () {
+      await setFlag([sel.dataset.id], sel.value === 'practice' ? { practice: true, official: null } : { practice: null, official: true });
+      status('Saved – ' + (sel.value === 'practice' ? 'left out of averages, trends and DP.' : 'counts as official.'));
+    };
+  });
+  body.querySelectorAll('.cpa-open').forEach(function (b) {
+    b.onclick = async function () {
+      document.getElementById('modal-class-page').classList.add('hidden');
+      if (typeof setAdminTab !== 'function') return;
+      setAdminTab('ap-results');
+      apResultsState.year = 'all'; apResultsState.showArchived = true;
+      var cls = document.getElementById('ap-results-class');
+      if (!cls.querySelector('option[value="' + className + '"]')) await loadApResultsClassOptions();
+      cls.value = className;
+      await openAssessmentResults(className);
+      var sel = document.getElementById('ap-results-assessment');
+      if (sel.querySelector('option[value="' + b.dataset.id + '"]')) { sel.value = b.dataset.id; renderAssessmentResultsPanel(); }
+    };
+  });
+  body.querySelectorAll('.cpa-done').forEach(function (b) {
+    b.onclick = function () {
+      var S = list[Number(b.dataset.i)];
+      var row = body.querySelector('.cpa-missing[data-i="' + b.dataset.i + '"]');
+      if (!row) return;
+      if (!row.classList.contains('hidden')) { row.classList.add('hidden'); return; }
+      var cell = row.querySelector('td');
+      var runnable = typeof ASSESSMENTS !== 'undefined' && ASSESSMENTS[S.id] && ASSESSMENTS[S.id].type !== 'paper' && typeof assignForcedApToStudent === 'function';
+      var name = function (c) { return (typeof studentName === 'function' && studentName(c)) || c; };
+      cell.innerHTML = S.missing.length ? '<b>Not done yet (' + S.missing.length + '):</b> <div class="flex flex-wrap gap-2 my-1">' + S.missing.map(function (c) {
+        return '<label class="flex items-center gap-1 bg-white border border-amber-200 rounded px-2 py-0.5"><input type="checkbox" class="cpa-miss-check" value="' + cpEsc(c) + '" checked> ' + cpEsc(name(c)) + '</label>';
+      }).join('') + '</div>' + (runnable ? '<button type="button" class="cpa-force jhncc-primary px-3 py-1 rounded text-xs font-semibold">Force AP to these students</button>' : '<span class="text-xs text-gray-600">Paper test – add their marks in the GCSE tab when they have sat it.</span>') : 'Everyone has done this.';
+      row.classList.remove('hidden');
+      var fb = cell.querySelector('.cpa-force');
+      if (fb) fb.onclick = async function () {
+        var picked = Array.prototype.map.call(cell.querySelectorAll('.cpa-miss-check:checked'), function (x) { return x.value; });
+        if (!picked.length) return;
+        fb.disabled = true; fb.textContent = 'Assigning…';
+        try {
+          for (var i = 0; i < picked.length; i++) await assignForcedApToStudent(className, picked[i], S.id);
+          fb.textContent = 'Assigned to ' + picked.length + ' ✓';
+        } catch (e) { fb.disabled = false; fb.textContent = 'Force AP to these students'; status('Could not assign: ' + e.message); }
+      };
+    };
+  });
 }
 
 async function classPageRenderSettings(body, className, settings) {
