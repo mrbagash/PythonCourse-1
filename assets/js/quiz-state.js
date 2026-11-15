@@ -960,8 +960,12 @@ function openAssessmentSetup(className) {
   assessment.className = className;
   populateAssessmentSelect('ap-assessment-select');
   // Online GCSE tests are made in the GCSE tab – load them, then refresh the list.
+  if (typeof renderAssessmentPicker === 'function') renderAssessmentPicker('ap-assessment-picker', 'ap-assessment-select', className, 'start');
   if (typeof gcseRegisterOnlineTests === 'function') {
-    gcseRegisterOnlineTests().then(function() { populateAssessmentSelect('ap-assessment-select'); }).catch(function() {});
+    gcseRegisterOnlineTests().then(function() {
+      populateAssessmentSelect('ap-assessment-select');
+      if (typeof renderAssessmentPicker === 'function') renderAssessmentPicker('ap-assessment-picker', 'ap-assessment-select', className, 'start');
+    }).catch(function() {});
   }
   document.getElementById('ap-setup-class').textContent = className;
   document.getElementById('ap-force-class').checked = false;

@@ -3685,6 +3685,7 @@ async function loadForceApTab() {
       o.textContent = (ASSESSMENTS[id].title || id);
       assessEl.appendChild(o);
     });
+    if (typeof renderAssessmentPicker === 'function' && classEl.value) renderAssessmentPicker('force-ap-picker', 'force-ap-assessment', classEl.value, 'force', { showAll: showAllEl && showAllEl.checked });
   }
   fillAssessments();
   if (showAllEl) showAllEl.onchange = fillAssessments;

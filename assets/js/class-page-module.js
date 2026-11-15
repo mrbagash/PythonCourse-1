@@ -590,3 +590,92 @@ async function classCoveredTopics(className) {
   var s = await classSettings(className);
   return Object.keys(s.covered || {}).map(function (k) { return k.replace(/_/g, '.'); });
 }
+
+// ── Test picker for Start AP / Force AP ─────────────────────────────────────
+// Search, "For this class" / "All", Suggested (not done yet) first, grouped, with status.
+var apPicker = {};
+async function renderAssessmentPicker(boxId, selectId, className, mode, opts) {
+  opts = opts || {};
+  var box = document.getElementById(boxId), select = document.getElementById(selectId);
+  if (!box || !select || typeof ASSESSMENTS === 'undefined') return;
+  var st = apPicker[boxId] = apPicker[boxId] || { scope: 'class', search: '', archived: false };
+  st.className = className; st.mode = mode;
+  var token = st.token = (st.token || 0) + 1;
+  box.innerHTML = '<div class="text-xs text-gray-400">Loading tests…</div>';
+  var data = null;
+  try { data = await classAssessmentData(className); } catch (e) {}
+  if (token !== st.token) return;
+  var flags = (data && data.flags) || {};
+  var year = typeof classYearGroup === 'function' ? classYearGroup(className) : null;
+  var done = {};
+  if (data) data.codes.forEach(function (c) {
+    Object.keys(data.recs[c] || {}).forEach(function (id) {
+      var r = data.recs[c][id];
+      if (academicYearStart(r.completedAt) === currentAcademicYear()) done[id] = (done[id] || 0) + 1;
+    });
+  });
+  var total = data ? data.codes.length : 0;
+  var items = Object.keys(ASSESSMENTS).filter(function (id) {
+    var a = ASSESSMENTS[id];
+    if (!a || a.legacyOf || a.hidden || a.type === 'paper') return false;
+    if (a.type === 'gcse') return !a.className || a.className === className;
+    return true;
+  }).map(function (id) {
+    var a = ASSESSMENTS[id];
+    var m = (id + ' ' + (a.title || '')).match(/year\s*-?(\d{1,2})/i);
+    return {
+      id: id, title: a.title || id, gcse: a.type === 'gcse', apYear: m ? Number(m[1]) : null,
+      practice: assessmentIsPractice(id, flags), archived: assessmentIsArchived(id, flags), done: done[id] || 0,
+      kind: a.type === 'gcse' && typeof gcse !== 'undefined' && gcse.tests && gcse.tests[id] ? (gcse.tests[id].kind === 'mock' ? 'Mock' : gcse.tests[id].kind === 'eou' ? 'End of unit' : 'GCSE test') : null,
+      created: a.type === 'gcse' && typeof gcse !== 'undefined' && gcse.tests && gcse.tests[id] ? (gcse.tests[id].createdAt || 0) : 0
+    };
+  });
+  var draw = function () {
+    var term = st.search.trim().toLowerCase();
+    var list = items.filter(function (it) {
+      if (!st.archived && it.archived) return false;
+      if (term && it.title.toLowerCase().indexOf(term) === -1) return false;
+      if (st.scope === 'class' && !opts.showAll && !it.gcse && it.apYear != null && year != null && it.apYear !== year) return false;
+      return true;
+    });
+    var groups = [], used = {};
+    var add = function (label, arr) { arr = arr.filter(function (it) { return !used[it.id]; }); if (!arr.length) return; arr.forEach(function (it) { used[it.id] = true; }); groups.push({ label: label, items: arr }); };
+    add('★ Suggested – not started yet', list.filter(function (it) { return !it.practice && !it.done && (it.gcse || it.apYear == null || it.apYear === year); }).sort(function (a, b) { return b.created - a.created; }));
+    add('GCSE tests for this class', list.filter(function (it) { return it.gcse && !it.practice; }));
+    var years = {};
+    list.forEach(function (it) { if (!it.gcse && !it.practice) years[it.apYear || 0] = true; });
+    Object.keys(years).map(Number).sort(function (a, b) { return a - b; }).forEach(function (y) {
+      add(y ? 'Year ' + y + ' APs' : 'Other APs', list.filter(function (it) { return !it.gcse && !it.practice && (it.apYear || 0) === y; }));
+    });
+    add('Practice', list.filter(function (it) { return it.practice; }));
+    var h = '<div class="border border-gray-200 rounded-lg p-2 text-sm bg-white">' +
+      '<div class="flex flex-wrap items-center gap-2 mb-2"><input class="ap-pick-search border border-gray-300 rounded px-2 py-1 text-sm flex-1 min-w-[140px]" placeholder="Search tests…" value="' + cpEsc(st.search) + '">' +
+      '<label class="text-xs"><input type="radio" name="' + boxId + '-scope" value="class"' + (st.scope === 'class' ? ' checked' : '') + '> For this class</label>' +
+      '<label class="text-xs"><input type="radio" name="' + boxId + '-scope" value="all"' + (st.scope === 'all' ? ' checked' : '') + '> All</label>' +
+      '<label class="text-xs"><input type="checkbox" class="ap-pick-archived"' + (st.archived ? ' checked' : '') + '> Archived</label></div>' +
+      '<div class="max-h-56 overflow-y-auto">' + (groups.length ? groups.map(function (g) {
+        return '<div class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mt-2 mb-0.5">' + cpEsc(g.label) + '</div>' + g.items.map(function (it) {
+          var on = select.value === it.id;
+          var status = it.done ? (total && it.done >= total ? '<span class="text-green-700">done ' + it.done + '/' + total + ' ✓</span>' : 'done ' + it.done + '/' + total) : '<span class="text-amber-700">not started</span>';
+          return '<button type="button" class="ap-pick-item w-full text-left flex items-center justify-between gap-2 px-2 py-1 rounded ' + (on ? 'bg-red-50 border border-[rgb(176,28,35)]' : 'hover:bg-gray-50 border border-transparent') + '" data-id="' + cpEsc(it.id) + '">' +
+            '<span>' + cpEsc(it.title) + (it.kind ? ' <span class="text-xs text-gray-500">· ' + cpEsc(it.kind) + '</span>' : '') + (it.archived ? ' <span class="text-xs text-gray-500">· archived</span>' : '') + '</span><span class="text-xs whitespace-nowrap">' + status + '</span></button>';
+        }).join('');
+      }).join('') : '<div class="text-xs text-gray-500 py-2">No tests match.</div>') + '</div></div>';
+    box.innerHTML = h;
+    var search = box.querySelector('.ap-pick-search');
+    search.oninput = function () { st.search = search.value; var pos = search.selectionStart; draw(); var s2 = box.querySelector('.ap-pick-search'); s2.focus(); s2.setSelectionRange(pos, pos); };
+    box.querySelectorAll('input[name="' + boxId + '-scope"]').forEach(function (r) { r.onchange = function () { st.scope = r.value; draw(); }; });
+    box.querySelector('.ap-pick-archived').onchange = function () { st.archived = this.checked; draw(); };
+    box.querySelectorAll('.ap-pick-item').forEach(function (b) {
+      b.onclick = function () {
+        if (!select.querySelector('option[value="' + b.dataset.id + '"]')) {
+          var o = document.createElement('option'); o.value = b.dataset.id; o.textContent = (ASSESSMENTS[b.dataset.id] || {}).title || b.dataset.id; select.appendChild(o);
+        }
+        select.value = b.dataset.id;
+        select.dispatchEvent(new Event('change'));
+        draw();
+      };
+    });
+  };
+  draw();
+}
