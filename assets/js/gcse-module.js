@@ -292,16 +292,9 @@ function gcseTopicCodesGuide(kind) {
 async function gcseOpenTab() {
   var panel = gEl('admin-gcse-tab');
   if (!panel) return;
-  if (!panel.dataset.ready) {
-    panel.innerHTML =
-      '<div class="flex flex-wrap gap-2 mb-3">' +
-        ['tests:Tests & WCF', 'bank:Question Bank', 'generate:Generate Test', 'review:Review answers'].map(function (p) {
-          var k = p.split(':');
-          return '<button type="button" class="gcse-subtab px-3 py-1.5 rounded border text-sm font-semibold" data-view="' + k[0] + '">' + k[1] + '</button>';
-        }).join('') +
-      '</div><div id="gcse-status" class="text-xs mb-2"></div><div id="gcse-body"></div>';
-    panel.dataset.ready = '1';
-    panel.querySelectorAll('.gcse-subtab').forEach(function (b) { b.onclick = function () { gcseSetView(b.dataset.view); }; });
+  if (panel.dataset.ready !== '2') {
+    panel.innerHTML = '<div id="gcse-nav" class="mb-2"></div><div id="gcse-status" class="text-xs mb-2"></div><div id="gcse-body"></div>';
+    panel.dataset.ready = '2';
   }
   gcseSetView(gcse.view);
 }
@@ -310,12 +303,14 @@ function gcseStatus(msg, isError) {
   el.textContent = msg || '';
   el.className = 'text-xs mb-2 ' + (isError ? 'text-red-600' : 'text-gray-500');
 }
+var GCSE_VIEW_TITLES = { bank: 'Question bank', generate: 'Test generator', review: '"I think I\'m right" requests' };
 function gcseSetView(view) {
   gcse.view = view;
-  document.querySelectorAll('.gcse-subtab').forEach(function (b) {
-    var on = b.dataset.view === view;
-    b.className = 'gcse-subtab px-3 py-1.5 rounded border text-sm font-semibold ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)] bg-red-50' : 'border-gray-300 text-gray-600 bg-white');
-  });
+  var nav = gEl('gcse-nav');
+  if (nav) {
+    nav.innerHTML = view === 'tests' ? '' : '<button type="button" id="gcse-back" class="text-sm text-blue-700 hover:underline">← Back to tests</button><span class="font-bold text-gray-800 ml-3">' + gEsc(GCSE_VIEW_TITLES[view] || '') + '</span>';
+    var back = gEl('gcse-back'); if (back) back.onclick = function () { gcseSetView('tests'); };
+  }
   gcseStatus('');
   if (view === 'tests') return gcseRenderTestsView();
   if (view === 'bank') return gcseRenderBankView();
@@ -331,7 +326,7 @@ async function gcseClassOptions(selected) {
   }).join('');
 }
 
-// ── Tests & WCF view ────────────────────────────────────────────
+// ── Tests: list per class → ▸ View (Grades · Class feedback · Release) ──
 async function gcseRenderTestsView() {
   var body = gEl('gcse-body');
   body.innerHTML = '<p class="text-gray-400 text-sm">Loading…</p>';
@@ -339,40 +334,42 @@ async function gcseRenderTestsView() {
     await gcseLoadTests();
   } catch (e) { if (gcse.view === 'tests') body.innerHTML = '<p class="text-red-600 text-sm">' + gEsc(gDbError(e)) + '</p>'; return; }
   var classOpts = await gcseClassOptions(gcse.className);
-  if (gcse.view !== 'tests') return; // user switched sub-tab while loading
+  if (gcse.view !== 'tests') return; // user switched view while loading
+  var menuItem = function (inner) { return '<div class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">' + inner + '</div>'; };
   body.innerHTML =
-    '<div class="flex flex-wrap items-end gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">' +
-      '<div><label class="block text-xs text-gray-500 mb-1">Class</label><select id="gcse-class" class="border border-gray-300 rounded px-2 py-1.5 text-sm">' + classOpts + '</select></div>' +
-      '<div><label class="block text-xs text-gray-500 mb-1">Test</label><select id="gcse-test" class="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[260px]"></select></div>' +
-      '<label class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold cursor-pointer" title="One spreadsheet with the questions (number, marks, topic) and every student\'s marks">Import test spreadsheet<input type="file" id="gcse-import-whole" accept=".xlsx,.xls,.csv" class="hidden"></label>' +
-      '<button type="button" id="gcse-blank-template" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Download blank test spreadsheet</button>' +
-      '<button type="button" id="gcse-new-test" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">New test (paste map)</button>' +
-      '<button type="button" id="gcse-guide" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Download Topic Codes Guide</button>' +
+    '<div class="flex flex-wrap items-end gap-3 mb-4">' +
+      '<div><label class="block text-xs text-gray-500 mb-1">GCSE class</label><select id="gcse-class" class="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[220px]">' + classOpts + '</select></div>' +
+      '<details id="gcse-new-menu" class="relative"><summary class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold cursor-pointer list-none">+ New test ▾</summary>' +
+        '<div class="absolute z-20 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-sm">' +
+          menuItem('<button type="button" id="gcse-blank-template" class="w-full text-left"><b>1. Download blank test spreadsheet</b><span class="block text-xs text-gray-500">Has this class\'s names and codes</span></button>') +
+          menuItem('<label class="block cursor-pointer"><b>2. Import test spreadsheet</b><span class="block text-xs text-gray-500">Questions + everyone\'s marks in one file</span><input type="file" id="gcse-import-whole" accept=".xlsx,.xls,.csv" class="hidden"></label>') +
+          menuItem('<button type="button" id="gcse-new-test" class="w-full text-left"><b>Paste a test map</b><span class="block text-xs text-gray-500">Advanced – from the Topic Codes Guide</span></button>') +
+        '</div></details>' +
       '<button type="button" id="gcse-class-settings" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Class page</button>' +
-    '</div><div id="gcse-test-body"></div>';
-  gEl('gcse-class').onchange = function () { gcse.className = this.value; gcse.testId = ''; gcseFillTestSelect(); gcseRenderTest(); };
-  gEl('gcse-test').onchange = function () { gcse.testId = this.value; gcseRenderTest(); };
-  gEl('gcse-new-test').onclick = function () { gcseRenderNewTestForm(); };
-  gEl('gcse-blank-template').onclick = function () { gcseDownloadBlankTemplate(); };
-  gEl('gcse-import-whole').onchange = function () { if (this.files[0]) gcseHandleWholeImport(this.files[0]); this.value = ''; };
+    '</div><div id="gcse-test-body"></div>' +
+    '<details class="mt-6 border border-gray-200 rounded-lg"><summary class="cursor-pointer px-3 py-2 text-sm font-semibold text-gray-700">More tools</summary><div class="flex flex-wrap gap-2 p-3">' +
+      '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="bank">Question bank</button>' +
+      '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="generate">Test generator</button>' +
+      '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="review">"I think I\'m right" requests</button>' +
+      '<button type="button" id="gcse-guide" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Download Topic Codes Guide</button>' +
+    '</div></details>';
+  gEl('gcse-class').onchange = function () { gcse.className = this.value; gcse.testId = ''; gcseRenderTest(); };
+  gEl('gcse-new-test').onclick = function () { gEl('gcse-new-menu').open = false; gcseRenderNewTestForm(); };
+  gEl('gcse-blank-template').onclick = function () { gEl('gcse-new-menu').open = false; gcseDownloadBlankTemplate(); };
+  gEl('gcse-import-whole').onchange = function () { gEl('gcse-new-menu').open = false; if (this.files[0]) gcseHandleWholeImport(this.files[0]); this.value = ''; };
   gEl('gcse-guide').onclick = function () { gDownload('Topic Codes Guide.txt', gcseTopicCodesGuide('test')); };
   gEl('gcse-class-settings').onclick = function () { if (gcse.className) openClassPage(gcse.className); else gcseStatus('Choose a class first.', true); };
-  gcseFillTestSelect();
+  document.querySelectorAll('.gcse-more').forEach(function (b) { b.onclick = function () { gcseSetView(b.dataset.view); }; });
   await gcseRenderTest();
 }
 function gcseTestsForClass(className) {
   return Object.keys(gcse.tests).filter(function (id) { return gcse.tests[id] && gcse.tests[id].className === className; })
     .sort(function (a, b) { return (gcse.tests[b].createdAt || 0) - (gcse.tests[a].createdAt || 0); });
 }
+// Keeps gcse.testId valid for the chosen class (the list / view are drawn by gcseRenderTest).
 function gcseFillTestSelect() {
-  var sel = gEl('gcse-test'); if (!sel) return;
   var ids = gcse.className ? gcseTestsForClass(gcse.className) : [];
-  sel.innerHTML = ids.length ? ids.map(function (id) {
-    return '<option value="' + gEsc(id) + '"' + (id === gcse.testId ? ' selected' : '') + '>' + gEsc(gcse.tests[id].title) + '</option>';
-  }).join('') : '<option value="">' + (gcse.className ? 'No paper tests yet – click "New paper test"' : 'Choose a class first') + '</option>';
-  if (ids.length && ids.indexOf(gcse.testId) === -1) gcse.testId = ids[0];
-  if (!ids.length) gcse.testId = '';
-  sel.value = gcse.testId;
+  if (gcse.testId && ids.indexOf(gcse.testId) === -1) gcse.testId = '';
 }
 
 function gcseBoundaryInputs(prefix, b) {
@@ -471,7 +468,7 @@ function gcseRenderNewTestForm(prefill) {
     if (prefill.bankIds) test.questions.forEach(function (q, i) { if (prefill.bankIds[i]) q.bankId = prefill.bankIds[i]; });
     try {
       await state.db.ref('gcse/tests/' + id).set(test);
-      gcse.tests[id] = test; gcse.testId = id;
+      gcse.tests[id] = test; gcse.testId = id; gcse.viewTab = 'grades';
       gcseFillTestSelect(); gcseRenderTest();
       gcseStatus('Saved "' + title + '". Next: download the template, fill in the marks and upload it.');
     } catch (e) { gcseStatus(gDbError(e), true); }
@@ -481,37 +478,93 @@ function gcseRenderNewTestForm(prefill) {
 async function gcseRenderTest() {
   var box = gEl('gcse-test-body'); if (!box) return;
   var seq = gcse.renderSeq = (gcse.renderSeq || 0) + 1;   // a newer render wins
+  gcseFillTestSelect();
+  if (!gcse.className) { box.innerHTML = '<p class="text-gray-400 text-sm py-6 text-center">Choose a GCSE class.</p>'; return; }
+  if (!gcse.testId) return gcseRenderTestList(box, seq);
+  return gcseRenderTestView(box, seq);
+}
+
+async function gcseRenderTestList(box, seq) {
+  var ids = gcseTestsForClass(gcse.className);
+  if (!ids.length) {
+    box.innerHTML = '<div class="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"><b>No tests for this class yet.</b><ol class="list-decimal ml-5 mt-1 space-y-0.5">' +
+      '<li>Click <b>+ New test → Download blank test spreadsheet</b>.</li><li>Fill in the questions (number, marks, topic) and everyone\'s marks.</li>' +
+      '<li>Click <b>+ New test → Import test spreadsheet</b>.</li></ol></div>';
+    return;
+  }
+  box.innerHTML = '<p class="text-gray-400 text-sm">Loading tests…</p>';
+  var data = await Promise.all([
+    Promise.all(ids.map(function (id) { return gcseLoadResults(id).catch(function () { return {}; }); })),
+    state.db.ref('classes/' + gcse.className + '/apFeedback').get().then(function (s) { return s.exists() ? s.val() : {}; }).catch(function () { return {}; })
+  ]);
+  if (seq !== gcse.renderSeq || !box.isConnected) return;
+  var released = data[1] || {};
+  box.innerHTML = '<div class="border border-gray-200 rounded-lg overflow-hidden"><table class="w-full text-sm"><tr class="bg-gray-50 text-left text-xs text-gray-500"><th class="p-2">Test</th><th class="p-2">Added</th><th class="p-2 text-center">Students</th><th class="p-2 text-center">Average</th><th class="p-2">Feedback</th><th class="p-2"></th></tr>' +
+    ids.map(function (id, i) {
+      var t = gcse.tests[id], res = data[0][i] || {};
+      var sat = Object.keys(res).filter(function (c) { return res[c] && !res[c].absent; });
+      var max = gcseTestTotal(t);
+      var avg = sat.length ? Math.round(sat.reduce(function (s, c) { return s + (Number(res[c].score) || 0); }, 0) / sat.length / Math.max(max, 1) * 100) : null;
+      var fb = released[id] && released[id].released;
+      return '<tr class="border-t hover:bg-gray-50"><td class="p-2 font-semibold">' + gEsc(t.title) + '</td><td class="p-2 text-xs text-gray-500">' + (t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '') + '</td>' +
+        '<td class="p-2 text-center">' + (sat.length ? sat.length : '<span class="text-gray-400">no marks yet</span>') + '</td>' +
+        '<td class="p-2 text-center">' + (avg == null ? '–' : '<span class="px-1.5 rounded font-bold text-xs" style="' + gRag(avg) + '">' + avg + '%</span>') + '</td>' +
+        '<td class="p-2 text-xs">' + (fb ? '<span class="text-green-700">✓ Released</span>' : '<span class="text-gray-500">Not released</span>') + '</td>' +
+        '<td class="p-2 text-right"><button type="button" class="gcse-open-test px-3 py-1 rounded border border-gray-300 text-sm font-semibold hover:bg-white" data-id="' + gEsc(id) + '">▸ View</button></td></tr>';
+    }).join('') + '</table></div>';
+  box.querySelectorAll('.gcse-open-test').forEach(function (b) {
+    b.onclick = function () { gcse.testId = b.dataset.id; gcse.viewTab = 'grades'; gcseRenderTest(); };
+  });
+}
+
+async function gcseRenderTestView(box, seq) {
   var t = gcse.tests[gcse.testId];
-  if (!gcse.className) { box.innerHTML = '<p class="text-gray-400 text-sm py-6 text-center">Choose a class.</p>'; return; }
-  if (!t) { box.innerHTML = '<p class="text-gray-400 text-sm py-6 text-center">No paper test selected. Click "New paper test" to add the mock you have just done.</p>'; return; }
   box.innerHTML = '<p class="text-gray-400 text-sm">Loading results…</p>';
+  var fbInfo = null;
   try {
-    var data = await Promise.all([gcseLoadResults(gcse.testId), gcseLoadTargets(), gcseLoadClassCodes(gcse.className)]);
+    var data = await Promise.all([gcseLoadResults(gcse.testId), gcseLoadTargets(), gcseLoadClassCodes(gcse.className),
+      state.db.ref('classes/' + gcse.className + '/apFeedback/' + gcse.testId).get().then(function (s) { return s.exists() ? s.val() : null; }).catch(function () { return null; })]);
     if (seq !== gcse.renderSeq || !box.isConnected) return;
-    gcse.results = data[0]; gcse.codes = data[2];
+    gcse.results = data[0]; gcse.codes = data[2]; fbInfo = data[3];
   } catch (e) { if (box.isConnected) box.innerHTML = '<p class="text-red-600 text-sm">' + gEsc(gDbError(e)) + '</p>'; return; }
   var rows = gcseStudentRows(t, gcse.results, gcse.targets, gcse.codes);
   var hasResults = rows.some(function (r) { return !r.missing; });
-  var h = '<div class="flex flex-wrap gap-2 mb-3">' +
-    '<button type="button" id="gcse-dl-template" class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold">Download template</button>' +
-    '<label class="px-3 py-1.5 rounded border border-blue-400 text-blue-700 bg-blue-50 text-sm font-semibold cursor-pointer">Upload filled template<input type="file" id="gcse-upload" accept=".xlsx,.xls,.csv" class="hidden"></label>' +
-    (hasResults ? '<button type="button" id="gcse-print-wcf" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Print WCF sheet</button>' +
-      '<button type="button" id="gcse-print-slips" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Print feedback slips</button>' +
-      '<button type="button" id="gcse-export" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Export grades</button>' +
-      '<button type="button" id="gcse-release" class="px-3 py-1.5 rounded border border-green-500 text-green-700 bg-green-50 text-sm font-semibold">Release feedback</button>' +
-      '<label class="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" id="gcse-show-grades"' + (t.showGrades ? ' checked' : '') + '> Show grades to students</label>' : '') +
-    '<button type="button" id="gcse-edit-test" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Boundaries / settings</button>' +
-    '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div>';
-  if (!hasResults) {
-    h += '<div class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">No marks yet. <b>Download template</b> (it has every student\'s name and code), type in the marks, then <b>Upload filled template</b>.' +
-      ' Use <b>ABS</b> for absent students and leave a cell <b>blank</b> if a question was not attempted.</div>';
+  var tab = hasResults ? (gcse.viewTab || 'grades') : 'marks';
+  var tabBtn = function (k, label) {
+    var on = tab === k;
+    return '<button type="button" class="gcse-vtab px-3 py-1.5 text-sm font-semibold border-b-2 ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)]' : 'border-transparent text-gray-500 hover:text-gray-800') + '" data-tab="' + k + '">' + label + '</button>';
+  };
+  var menu = '<details id="gcse-more-menu" class="relative ml-auto"><summary class="px-3 py-1.5 rounded border border-gray-300 text-sm cursor-pointer list-none" title="More">⋯</summary>' +
+    '<div class="absolute right-0 z-20 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg p-1 text-sm">' +
+      (hasResults ? '<button type="button" id="gcse-dl-template" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Download marks spreadsheet</button>' +
+        '<label class="block px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">Upload corrected marks<input type="file" id="gcse-upload" accept=".xlsx,.xls,.csv" class="hidden"></label>' +
+        '<button type="button" id="gcse-print-slips" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Print feedback slips</button>' +
+        '<button type="button" id="gcse-export" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Export grades (CSV)</button>' : '') +
+      '<button type="button" id="gcse-edit-test" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Grade boundaries / rename / delete</button>' +
+    '</div></details>';
+  var h = '<div class="flex items-center gap-3 mb-1"><button type="button" id="gcse-back-list" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
+    '<h3 class="text-lg font-bold text-gray-800">' + gEsc(t.title) + '</h3><span class="text-xs text-gray-500">' + gcseTestTotal(t) + ' marks · ' + (t.questions || []).length + ' questions</span></div>' +
+    '<div class="flex items-center gap-1 border-b border-gray-200 mb-3">' +
+      (hasResults ? tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') : tabBtn('marks', 'Add marks')) +
+      menu + '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div><div id="gcse-tab-body">';
+  if (tab === 'marks') {
+    h += '<div class="rounded border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"><b>No marks yet.</b> Download the marks spreadsheet (every student\'s name and code is already in it), type in the marks, then upload it.' +
+      ' Use <b>ABS</b> for absent students and leave a cell <b>blank</b> if a question was not attempted.' +
+      '<div class="flex gap-2 mt-3"><button type="button" id="gcse-dl-template" class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold">Download marks spreadsheet</button>' +
+      '<label class="px-3 py-1.5 rounded border border-blue-400 text-blue-700 bg-white text-sm font-semibold cursor-pointer">Upload filled spreadsheet<input type="file" id="gcse-upload" accept=".xlsx,.xls,.csv" class="hidden"></label></div></div>';
+  } else if (tab === 'grades') {
+    h += gcseGradesTabHtml(t, rows);
+  } else if (tab === 'feedback') {
+    h += gcseFeedbackTabHtml(t, rows);
   } else {
-    h += gcseWcfHtml(t, rows);
+    h += gcseReleaseTabHtml(t, rows, fbInfo);
   }
-  box.innerHTML = h;
-  gEl('gcse-dl-template').onclick = function () { gcseDownloadTemplate(t, rows); };
-  gEl('gcse-upload').onchange = function () { if (this.files[0]) gcseHandleUpload(this.files[0]); this.value = ''; };
-  gEl('gcse-edit-test').onclick = function () { gcseRenderSettings(t); };
+  box.innerHTML = h + '</div>';
+  gEl('gcse-back-list').onclick = function () { gcse.testId = ''; gcseRenderTest(); };
+  box.querySelectorAll('.gcse-vtab').forEach(function (b) { b.onclick = function () { gcse.viewTab = b.dataset.tab; gcseRenderTest(); }; });
+  gEl('gcse-dl-template').onclick = function () { var m = gEl('gcse-more-menu'); if (m) m.open = false; gcseDownloadTemplate(t, rows); };
+  gEl('gcse-upload').onchange = function () { var m = gEl('gcse-more-menu'); if (m) m.open = false; if (this.files[0]) gcseHandleUpload(this.files[0]); this.value = ''; };
+  gEl('gcse-edit-test').onclick = function () { gEl('gcse-more-menu').open = false; gcseRenderSettings(t); };
   if (hasResults) gcseBindWcf(t, rows);
 }
 
@@ -828,7 +881,7 @@ function gcseRenderWholeImport(parsed, codes) {
     var id = 'gcse-' + Date.now().toString(36);
     try {
       await state.db.ref('gcse/tests/' + id).set(t);
-      gcse.tests[id] = t; gcse.testId = id;
+      gcse.tests[id] = t; gcse.testId = id; gcse.viewTab = 'grades';
       gcseFillTestSelect();
       await gcseSaveImport(t, finalImp);
       gcseStatus('Created "' + t.title + '" and saved ' + finalImp.rows.length + ' students. Students see their results once you click Release feedback.');
@@ -837,7 +890,15 @@ function gcseRenderWholeImport(parsed, codes) {
 }
 
 // ── WCF + grades rendering ──────────────────────────────────────
-function gcseWcfHtml(t, rows) {
+function gcseClassSplit(t, sat) {
+  var classMarks = {};
+  var classQs = (t.questions || []).map(function (q) { return { id: q.id, marks: q.marks * sat.length, topics: q.topics }; });
+  (t.questions || []).forEach(function (q) { classMarks[q.id] = sat.reduce(function (s, r) { return s + (Number(r.marks[q.id]) || 0); }, 0); });
+  return gcsePaperSplit(classQs, classMarks);
+}
+
+// Tab 1 – Grades
+function gcseGradesTabHtml(t, rows) {
   var stats = gcseTopicStats(t, rows);
   var sat = stats.sat;
   var absent = rows.filter(function (r) { return r.absent; }).length;
@@ -847,53 +908,28 @@ function gcseWcfHtml(t, rows) {
   var below = sat.filter(function (r) { return r.gap != null && r.gap < 0; });
   var lowDpBelow = below.filter(function (r) { var d = gcseDp(r); return d != null && d >= 3; });
   var card = function (v, l, c) { return '<div class="rounded-lg border p-3 text-center ' + c + '"><div class="text-2xl font-bold">' + v + '</div><div class="text-xs">' + l + '</div></div>'; };
-  var h = '<div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">' +
-    card(sat.length, 'Sat the test', 'bg-blue-50 border-blue-100 text-blue-700') +
-    card(absent, 'Absent', 'bg-gray-50 border-gray-200 text-gray-600') +
+  var classSplit = gcseClassSplit(t, sat);
+  var hasSplit = classSplit.both;
+  var h = '<div class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">' +
+    card(sat.length + (absent ? ' <span class="text-sm font-normal">(+' + absent + ' absent)</span>' : ''), 'Sat the test', 'bg-blue-50 border-blue-100 text-blue-700') +
     card(Math.round(avg * 10) / 10 + ' / ' + gcseTestTotal(t), 'Average score', 'bg-purple-50 border-purple-100 text-purple-700') +
     card(avgGrade, 'Average grade' + (t.boundaries ? '' : ' (J277 default boundaries)'), 'bg-indigo-50 border-indigo-100 text-indigo-700') +
     card(below.length, 'Below target', 'bg-red-50 border-red-100 text-red-700') +
     card(lowDpBelow.length, 'Low DP & below target', 'bg-amber-50 border-amber-100 text-amber-800') + '</div>';
-
-  // Reteach list
-  h += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4"><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Reteach list <span class="text-xs font-normal text-gray-500">(most marks lost by the class)</span></h4>' +
-    (stats.reteach.length ? '<ol class="space-y-1 text-sm">' + stats.reteach.map(function (T) {
-      return '<li class="flex items-center justify-between gap-2"><span><span class="px-1.5 rounded text-xs font-bold" style="' + gRag(T.pct) + '">' + T.pct + '%</span> ' + gEsc(T.label) + ' <span class="text-xs text-gray-500">– ' + T.lost + ' marks lost</span></span>' +
-        '<button type="button" class="gcse-quiz-topic text-xs px-2 py-0.5 rounded border border-purple-300 text-purple-700" data-topics="' + gEsc(T.code) + '">Quiz class</button></li>';
-    }).join('') + '</ol><button type="button" class="gcse-quiz-topic mt-2 text-xs px-2 py-1 rounded border border-purple-400 text-purple-700 bg-purple-50 font-semibold" data-topics="' + gEsc(stats.reteach.map(function (T) { return T.code; }).join(',')) + '">Quiz the class on the whole reteach list</button>' : '<p class="text-sm text-gray-500">No marks lost – nothing to reteach.</p>') +
-    '</div><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Intervention groups <span class="text-xs font-normal text-gray-500">(weakest topic under 50%)</span></h4>';
-  var groups = gcseInterventionGroups(stats);
-  h += groups.length ? groups.map(function (g) {
-    return '<div class="mb-2 text-sm"><div class="font-semibold">' + gEsc(J277.label(g.topic)) + ' <span class="text-xs text-gray-500">(' + g.students.length + ')</span></div><div class="text-xs text-gray-600">' +
-      g.students.map(function (r) { return gEsc(r.name || r.code); }).join(', ') + '</div></div>';
-  }).join('') : '<p class="text-sm text-gray-500">Nobody is below 50% on any topic.</p>';
-  h += '</div></div>';
-
-  // Paper 1 vs Paper 2 (class)
-  var classMarks = {}; var classQs = (t.questions || []).map(function (q) { return { id: q.id, marks: q.marks * sat.length, topics: q.topics }; });
-  (t.questions || []).forEach(function (q) { classMarks[q.id] = sat.reduce(function (s, r) { return s + (Number(r.marks[q.id]) || 0); }, 0); });
-  var classSplit = gcsePaperSplit(classQs, classMarks);
-  var hasSplit = classSplit.both;
   if (hasSplit) {
     var cp = classSplit.papers;
-    var perStudentGrade = function (k) {
-      var gs = sat.map(function (r) { return r.split && r.split.papers[k] && r.split.papers[k].grade; }).filter(function (g) { return g != null; });
-      return gs.length ? (gs.reduce(function (a, b) { return a + b; }, 0) / gs.length).toFixed(1) : '–';
-    };
-    h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Paper 1 vs Paper 2</h4><div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">' +
-      ['1', '2'].map(function (k) {
-        return '<div class="rounded border p-2' + (classSplit.focus === k ? ' border-red-300 bg-red-50' : ' border-gray-200') + '"><div class="font-semibold">Paper ' + k + (k === '1' ? ' – Computer systems' : ' – Algorithms & programming') + '</div>' +
-          '<div>Class average <b>' + cp[k].pct + '%</b> · average grade <b>' + perStudentGrade(k) + '</b></div><div class="text-xs text-gray-500">' + (cp[k].p / Math.max(sat.length, 1)) + ' marks of this paper in the test</div></div>';
-      }).join('') +
-      '<div class="rounded border border-gray-200 p-2 text-sm">' + (classSplit.focus ? 'Focus reteaching on <b>Paper ' + classSplit.focus + '</b>.' : 'Both papers are level.') +
-      '<div class="text-xs text-gray-500 mt-1">Paper grades use the OCR J277 June 2024 paper boundaries, scaled to the marks in this test.</div></div></div></div>';
+    h += '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">' + ['1', '2'].map(function (k) {
+      var weak = classSplit.focus === k;
+      return '<div class="rounded-lg border p-3 ' + (weak ? 'border-red-300 bg-red-50' : 'border-gray-200') + '"><div class="flex justify-between text-sm"><b>Paper ' + k + (k === '1' ? ' – Computer systems' : ' – Algorithms & programming') + '</b>' +
+        (weak ? '<span class="text-xs text-red-700 font-semibold">Focus reteaching here</span>' : '') + '</div>' +
+        '<div class="h-2 bg-gray-200 rounded mt-2"><div class="h-2 rounded" style="width:' + cp[k].pct + '%;background:' + (cp[k].pct >= 70 ? '#16a34a' : cp[k].pct >= 40 ? '#d97706' : '#dc2626') + '"></div></div>' +
+        '<div class="text-xs text-gray-600 mt-1">Class average ' + cp[k].pct + '%</div></div>';
+    }).join('') + '</div>';
   }
-
-  // Grades table
-  h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><div class="flex flex-wrap items-center justify-between gap-2 mb-2"><h4 class="font-bold text-gray-800">Grades and Definite Purpose</h4>' +
+  h += '<div class="border border-gray-200 rounded-lg p-3"><div class="flex flex-wrap items-center justify-between gap-2 mb-2"><h4 class="font-bold text-gray-800">Students</h4>' +
     '<select id="gcse-grade-filter" class="border border-gray-300 rounded px-2 py-1 text-xs"><option value="all">Everyone</option><option value="below">Below target</option><option value="lowdp">Low DP (3–4) & below target</option></select></div>' +
     gcseGradeDistributionHtml(sat) +
-    '<div class="overflow-x-auto"><table class="w-full text-xs border border-gray-200" id="gcse-grade-table"><tr class="bg-gray-50"><th class="p-1 text-left">Student</th><th class="p-1">Score</th><th class="p-1">%</th><th class="p-1">Working</th>' + (hasSplit ? '<th class="p-1">Paper 1</th><th class="p-1">Paper 2</th>' : '') + '<th class="p-1">Target</th><th class="p-1">Gap</th><th class="p-1">Not attempted</th><th class="p-1">DP (1 best – 4 worst)</th></tr>' +
+    '<div class="overflow-x-auto"><table class="w-full text-xs border border-gray-200" id="gcse-grade-table"><tr class="bg-gray-50"><th class="p-1 text-left">Student</th><th class="p-1">Score</th><th class="p-1">%</th><th class="p-1">Overall</th>' + (hasSplit ? '<th class="p-1">Paper 1</th><th class="p-1">Paper 2</th>' : '') + '<th class="p-1">Target</th><th class="p-1">Gap</th><th class="p-1">Not attempted</th><th class="p-1">DP (1 best – 4 worst)</th></tr>' +
     rows.filter(function (r) { return !r.missing; }).map(function (r) {
       var gap = r.gap == null ? '' : (r.gap >= 0 ? '<span class="text-green-700 font-bold">▲ ' + (r.gap > 0 ? '+' + r.gap : '0') + '</span>' : '<span class="text-red-700 font-bold">▼ ' + r.gap + '</span>');
       var dpSel = '<select class="gcse-dp border border-gray-300 rounded px-1 text-xs" data-code="' + gEsc(r.code) + '"><option value="">' + (r.dpSuggested != null ? 'Suggested: ' + r.dpSuggested : '–') + '</option>' +
@@ -910,20 +946,45 @@ function gcseWcfHtml(t, rows) {
         '<td class="p-1 text-center"><select class="gcse-target border border-gray-300 rounded px-1 text-xs" data-code="' + gEsc(r.code) + '">' + gGradeOptions(r.target, true) + '</select></td>' +
         '<td class="p-1 text-center">' + gap + '</td><td class="p-1 text-center">' + (r.absent ? '' : (r.notAttempted || '')) + '</td><td class="p-1 text-center">' + (r.absent ? '' : dpSel) + '</td></tr>';
     }).join('') + '</table></div></div>';
+  return h;
+}
 
-  // Topic heatmap
-  h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Topic heatmap</h4><div class="overflow-x-auto"><table class="text-xs border-collapse"><tr><th class="p-1 text-left sticky left-0 bg-white">Student</th>' +
-    stats.topics.map(function (T) { return '<th class="p-1 font-mono" title="' + gEsc(T.label) + '">' + gEsc(T.code) + '</th>'; }).join('') + '</tr>' +
-    '<tr class="font-bold"><td class="p-1 sticky left-0 bg-white">Class</td>' + stats.topics.map(function (T) { return '<td class="p-1 text-center" style="' + gRag(T.pct) + '">' + T.pct + '%</td>'; }).join('') + '</tr>' +
-    sat.map(function (r) {
-      return '<tr><td class="p-1 whitespace-nowrap sticky left-0 bg-white">' + gEsc(r.name || r.code) + '</td>' + stats.topics.map(function (T) {
-        var p = T.per[r.code]; var pct = p ? gPct(p.a, p.p) : null;
-        return '<td class="p-1 text-center" style="' + gRag(pct) + '" title="' + gEsc(T.label) + '">' + (pct == null ? '' : pct) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</table></div><p class="text-xs text-gray-500 mt-1">Hover a code to see the topic name. Green ≥ 70%, amber 40–69%, red &lt; 40%.</p></div>';
-
+// Tab 2 – Class feedback (WCF)
+function gcseFeedbackTabHtml(t, rows) {
+  var stats = gcseTopicStats(t, rows);
+  var sat = stats.sat;
+  var paper = gcse.heatPaper || 'all';
+  var topics = stats.topics.filter(function (T) { return paper === 'all' || GcseCore.paperOf(T.code) === paper; });
+  var hasBoth = stats.topics.some(function (T) { return GcseCore.paperOf(T.code) === '1'; }) && stats.topics.some(function (T) { return GcseCore.paperOf(T.code) === '2'; });
+  var h = '<div class="flex justify-end mb-2"><button type="button" id="gcse-print-wcf" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Print WCF sheet</button></div>';
+  h += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4"><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Reteach these <span class="text-xs font-normal text-gray-500">(most marks lost)</span></h4>' +
+    (stats.reteach.length ? '<ol class="space-y-1 text-sm">' + stats.reteach.map(function (T) {
+      return '<li class="flex items-center justify-between gap-2"><span><span class="px-1.5 rounded text-xs font-bold" style="' + gRag(T.pct) + '">' + T.pct + '%</span> ' + gEsc(T.label) + ' <span class="text-xs text-gray-500">– ' + T.lost + ' marks lost</span></span>' +
+        '<button type="button" class="gcse-quiz-topic text-xs px-2 py-0.5 rounded border border-purple-300 text-purple-700" data-topics="' + gEsc(T.code) + '">Quiz class</button></li>';
+    }).join('') + '</ol><button type="button" class="gcse-quiz-topic mt-2 text-xs px-2 py-1 rounded border border-purple-400 text-purple-700 bg-purple-50 font-semibold" data-topics="' + gEsc(stats.reteach.map(function (T) { return T.code; }).join(',')) + '">Quiz the class on all of these</button>' : '<p class="text-sm text-gray-500">No marks lost – nothing to reteach.</p>') +
+    '</div><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Intervention groups <span class="text-xs font-normal text-gray-500">(weakest topic under 50%)</span></h4>';
+  var groups = gcseInterventionGroups(stats);
+  h += groups.length ? groups.map(function (g) {
+    return '<div class="mb-2 text-sm"><div class="font-semibold">' + gEsc(J277.label(g.topic)) + ' <span class="text-xs text-gray-500">(' + g.students.length + ')</span></div><div class="text-xs text-gray-600">' +
+      g.students.map(function (r) { return gEsc(r.name || r.code); }).join(', ') + '</div></div>';
+  }).join('') : '<p class="text-sm text-gray-500">Nobody is below 50% on any topic.</p>';
+  h += '</div></div>';
+  // Heatmap with paper switch
+  h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><div class="flex flex-wrap items-center justify-between gap-2 mb-2"><h4 class="font-bold text-gray-800">Topic heatmap</h4>' +
+    (hasBoth ? '<div class="flex gap-1 text-xs">' + [['all', 'Overall'], ['1', 'Paper 1'], ['2', 'Paper 2']].map(function (p) {
+      return '<button type="button" class="gcse-heat-paper px-2 py-1 rounded border ' + (paper === p[0] ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)] bg-red-50 font-semibold' : 'border-gray-300') + '" data-paper="' + p[0] + '">' + p[1] + '</button>';
+    }).join('') + '</div>' : '') + '</div>' +
+    (topics.length ? '<div class="overflow-x-auto"><table class="text-xs border-collapse"><tr><th class="p-1 text-left sticky left-0 bg-white">Student</th>' +
+      topics.map(function (T) { return '<th class="p-1 font-mono" title="' + gEsc(T.label) + '">' + gEsc(T.code) + '</th>'; }).join('') + '</tr>' +
+      '<tr class="font-bold"><td class="p-1 sticky left-0 bg-white">Class</td>' + topics.map(function (T) { return '<td class="p-1 text-center" style="' + gRag(T.pct) + '">' + T.pct + '%</td>'; }).join('') + '</tr>' +
+      sat.map(function (r) {
+        return '<tr><td class="p-1 whitespace-nowrap sticky left-0 bg-white">' + gEsc(r.name || r.code) + '</td>' + topics.map(function (T) {
+          var pp = T.per[r.code]; var pct = pp ? gPct(pp.a, pp.p) : null;
+          return '<td class="p-1 text-center" style="' + gRag(pct) + '" title="' + gEsc(T.label) + '">' + (pct == null ? '' : pct) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</table></div><p class="text-xs text-gray-500 mt-1">Hover a code to see the topic. Green ≥ 70%, amber 40–69%, red &lt; 40%.</p>' : '<p class="text-sm text-gray-500">No questions from this paper in the test.</p>') + '</div>';
   // Questions + command words
-  h += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4"><div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Per question</h4><div class="overflow-x-auto"><table class="w-full text-xs border border-gray-200"><tr class="bg-gray-50"><th class="p-1">Q</th><th class="p-1 text-left">Topic</th><th class="p-1">Avg</th><th class="p-1">%</th><th class="p-1">Not attempted</th><th class="p-1 text-left">Common mistake (your note)</th></tr>' +
+  h += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4"><div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Questions</h4><div class="overflow-x-auto"><table class="w-full text-xs border border-gray-200"><tr class="bg-gray-50"><th class="p-1">Q</th><th class="p-1 text-left">Topic</th><th class="p-1">Avg</th><th class="p-1">%</th><th class="p-1">Not attempted</th><th class="p-1 text-left">Common mistake (your note)</th></tr>' +
     stats.questions.map(function (q) {
       return '<tr class="border-t"><td class="p-1 font-semibold">' + gEsc(q.id) + '</td><td class="p-1">' + q.topics.map(function (tc) { return gEsc(J277.label(tc)); }).join('<br>') + '</td>' +
         '<td class="p-1 text-center">' + (Math.round(q.avg * 10) / 10) + ' / ' + q.marks + '</td><td class="p-1 text-center" style="' + gRag(q.pct) + '">' + q.pct + '%</td>' +
@@ -932,13 +993,26 @@ function gcseWcfHtml(t, rows) {
     }).join('') + '</table></div></div><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Exam technique (command words)</h4>' +
     (stats.commands.length ? '<table class="w-full text-xs">' + stats.commands.map(function (C) {
       return '<tr><td class="p-1">' + gEsc(C.word) + '</td><td class="p-1 text-right"><span class="px-1.5 rounded font-bold" style="' + gRag(C.pct) + '">' + C.pct + '%</span></td></tr>';
-    }).join('') + '</table>' : '<p class="text-xs text-gray-500">Add command words to the test map to see this.</p>') + '</div></div>';
+    }).join('') + '</table>' : '<p class="text-xs text-gray-500">Add command words to the test to see this.</p>') + '</div></div>';
   return h;
 }
+
+// Tab 3 – Release
+function gcseReleaseTabHtml(t, rows, fbInfo) {
+  var released = fbInfo && fbInfo.released;
+  return '<div class="max-w-2xl space-y-3"><div class="rounded-lg border p-4 ' + (released ? 'border-green-200 bg-green-50' : 'border-gray-200') + '">' +
+    (released ? '<b class="text-green-800">Released ' + new Date(fbInfo.releasedAt).toLocaleString('en-GB') + '.</b> Students can see it under <b>AP Feedback</b>. Release again after changing marks.' :
+      '<b>Not released yet.</b> Students cannot see their results until you release them.') + '</div>' +
+    '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-2"><div class="font-semibold">Each student will see:</div><ul class="list-disc ml-5 text-gray-700">' +
+      '<li>their score, and what went well / even better if by topic</li><li>Paper 1 vs Paper 2 and which paper to focus on</li><li>a <b>Fix my mistakes</b> practice button for their weak topics</li><li>the topics the class will revisit</li></ul>' +
+    '<label class="flex items-center gap-2 mt-2"><input type="checkbox" id="gcse-show-grades"' + (t.showGrades ? ' checked' : '') + '> Also show their grades (overall, Paper 1, Paper 2)</label></div>' +
+    '<button type="button" id="gcse-release" class="jhncc-primary px-5 py-2 rounded font-semibold">' + (released ? 'Release again' : 'Release feedback') + '</button></div>';
+}
+
 function gcseGradeDistributionHtml(sat) {
   var counts = {}; var max = 1;
   sat.forEach(function (r) { if (r.grade == null) return; counts[r.grade] = (counts[r.grade] || 0) + 1; max = Math.max(max, counts[r.grade]); });
-  if (!Object.keys(counts).length) return '<p class="text-xs text-gray-500 mb-2">Add grade boundaries (Boundaries / settings) to see working grades.</p>';
+  if (!Object.keys(counts).length) return '';
   var h = '<div class="flex items-end gap-1 h-20 mb-2">';
   for (var g = 0; g <= 9; g++) {
     var c = counts[g] || 0;
@@ -948,14 +1022,15 @@ function gcseGradeDistributionHtml(sat) {
 }
 
 function gcseBindWcf(t, rows) {
-  gEl('gcse-grade-filter').onchange = function () {
+  var on = function (id, ev, fn) { var el = gEl(id); if (el) el[ev] = fn; };
+  on('gcse-grade-filter', 'onchange', function () {
     var f = this.value;
     document.querySelectorAll('.gcse-grade-row').forEach(function (tr) {
       var gap = tr.dataset.gap === '' ? null : Number(tr.dataset.gap), dp = tr.dataset.dp === '' ? null : Number(tr.dataset.dp);
       var show = f === 'all' || (f === 'below' && gap != null && gap < 0) || (f === 'lowdp' && gap != null && gap < 0 && dp != null && dp >= 3);
       tr.classList.toggle('hidden', !show);
     });
-  };
+  });
   document.querySelectorAll('.gcse-target').forEach(function (sel) {
     sel.onchange = async function () {
       var g = GcseCore.parseGrade(sel.value);
@@ -982,14 +1057,17 @@ function gcseBindWcf(t, rows) {
   document.querySelectorAll('#gcse-test-body .gcse-quiz-topic').forEach(function (b) {
     b.onclick = function () { gcseOpenTopicQuiz(gcse.className, b.dataset.topics.split(',')); };
   });
-  gEl('gcse-print-wcf').onclick = function () { gcsePrintWcf(t, rows); };
-  gEl('gcse-print-slips').onclick = function () { gcsePrintSlips(t, rows); };
-  gEl('gcse-export').onclick = function () { gcseExport(t, rows); };
-  gEl('gcse-show-grades').onchange = async function () {
-    try { await state.db.ref('gcse/tests/' + gcse.testId + '/showGrades').set(this.checked); t.showGrades = this.checked; gcseStatus('Saved. Click Release feedback to update what students see.'); }
+  document.querySelectorAll('.gcse-heat-paper').forEach(function (b) {
+    b.onclick = function () { gcse.heatPaper = b.dataset.paper; gcseRenderTest(); };
+  });
+  on('gcse-print-wcf', 'onclick', function () { gcsePrintWcf(t, rows); });
+  on('gcse-print-slips', 'onclick', function () { gEl('gcse-more-menu').open = false; gcsePrintSlips(t, rows); });
+  on('gcse-export', 'onclick', function () { gEl('gcse-more-menu').open = false; gcseExport(t, rows); });
+  on('gcse-show-grades', 'onchange', async function () {
+    try { await state.db.ref('gcse/tests/' + gcse.testId + '/showGrades').set(this.checked); t.showGrades = this.checked; gcseStatus('Saved. Click Release to update what students see.'); }
     catch (e) { gcseStatus(gDbError(e), true); }
-  };
-  gEl('gcse-release').onclick = function () { gcseRelease(t, rows); };
+  });
+  on('gcse-release', 'onclick', async function () { await gcseRelease(t, rows); gcseRenderTest(); });
 }
 
 function gcseStudentTopicSummary(t, marks) {
