@@ -39,10 +39,11 @@ async function classOverviewData(className, settings, year) {
     Promise.all(codes.map(function (c) { return state.db.ref('accessLog/' + c + '/lastSeen').get().then(function (s) { return s.val() || 0; }).catch(function () { return 0; }); })),
     Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/gcseMisconceptions').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
     isGcse ? state.db.ref('gcse/targets').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }) : Promise.resolve({}),
-    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); }))
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/plc').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); }))
   ]);
-  var lastSeen = {}, misc = {}, dirt = {};
-  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; dirt[c] = extra[3][i]; });
+  var lastSeen = {}, misc = {}, dirt = {}, plc = {};
+  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; dirt[c] = extra[3][i]; plc[c] = extra[4][i]; });
   var targetsAll = extra[2];
   var tests = (typeof gcse !== 'undefined' && gcse.tests) || {};
   // Raw GCSE results (for feedback codes) for this year's official paper tests.
@@ -75,7 +76,7 @@ async function classOverviewData(className, settings, year) {
   // Per student
   var covered = Object.keys(settings.covered || {}).map(function (k) { return k.replace(/_/g, '.'); });
   var students = codes.map(function (code) {
-    var hist = [], missed = [], unit = {}, papers = {};
+    var hist = [], missed = [], unit = {}, papers = {}, sub = {};
     var grade = null, gradeEst = false, dp = null, miscIds = {};
     official.forEach(function (S) {
       var r = S.recs[code];
@@ -96,6 +97,7 @@ async function classOverviewData(className, settings, year) {
           if (pp) { var P = papers[pp] || (papers[pp] = { a: 0, p: 0 }); P.a += a; P.p += p; }
           topics.forEach(function (tc) {
             var n = J277.get(tc); if (!n) return;
+            J277.expand(tc).forEach(function (sc) { var S2 = sub[sc] || (sub[sc] = { a: 0, p: 0 }); S2.a += a; S2.p += p; });
             var area = J277.area(tc), point = J277.point(tc);
             [area && area.code, point && point.code !== (area && area.code) ? point.code : null].forEach(function (k) {
               if (!k) return; var U = unit[k] || (unit[k] = { a: 0, p: 0 }); U.a += a; U.p += p;
@@ -112,11 +114,19 @@ async function classOverviewData(className, settings, year) {
     var target = targetsAll[code] && targetsAll[code].grade != null ? Number(targetsAll[code].grade) : null;
     var trend = typeof gcseTrend === 'function' ? gcseTrend(hist) : { arrow: '–', label: '', cls: 'text-gray-400' };
     Object.keys(papers).forEach(function (k) { papers[k].pct = coPct(papers[k].a, papers[k].p); });
+    // Confidence (PLC) vs score on each rated sub-topic
+    var mism = [];
+    Object.keys(plc[code] || {}).forEach(function (k) {
+      var rr = plc[code][k]; if (!rr || !rr.r || typeof plcMismatch !== 'function') return;
+      var tc = k.replace(/_/g, '.'), S3 = sub[tc], pct = S3 && S3.p ? coPct(S3.a, S3.p) : null;
+      var mm = plcMismatch(rr.r, pct);
+      if (mm) mism.push({ topic: tc, kind: mm, pct: pct });
+    });
     return {
       code: code, name: coName(code), avg: avg, hist: hist, missed: missed, done: official.length - missed.length,
       grade: isGcse ? grade : null, gradeEst: gradeEst, target: isGcse ? target : null,
       gap: isGcse && grade != null && target != null ? grade - target : null,
-      dp: dp, trend: trend, lastSeen: lastSeen[code] || 0, unit: unit, papers: papers, misc: Object.keys(miscIds)
+      dp: dp, trend: trend, lastSeen: lastSeen[code] || 0, unit: unit, papers: papers, misc: Object.keys(miscIds), plcRated: Object.keys(plc[code] || {}).length, mismatch: mism
     };
   }).sort(function (a, b) { return a.name.localeCompare(b.name); });
 
@@ -358,7 +368,8 @@ function classOverviewDraw(body) {
         return '<div class="text-sm mb-1.5"><div><span class="px-1.5 rounded bg-amber-100 text-amber-900 font-bold text-xs">' + cpEsc(m.id) + '</span> ' + cpEsc(m.info ? m.info.text : '') +
           ' <span class="text-xs text-gray-500">– ' + m.students.length + ' student' + (m.students.length === 1 ? '' : 's') + '</span></div><div class="text-[11px] text-gray-500">' + m.students.map(function (s) { return cpEsc(s.name); }).join(', ') + '</div></div>';
       }).join('') : '<p class="text-sm text-gray-500">None recorded yet. They come from feedback codes on marked answers and from quizzes.</p>') + '</div></div>' +
-      '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Students × units</h4>' + coHeatmap(O) + '</div>';
+      '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Students × units</h4>' + coHeatmap(O) + '</div>' +
+      coPlcCard(O);
   }
   // Completion
   h += '<div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Completion</h4>' +
@@ -427,4 +438,21 @@ function classOverviewExport(O) {
   document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   classOverview.lastExport = { name: name, rows: rows };
+}
+
+// Confidence (PLC) vs score: who feels confident but is scoring low, and the reverse.
+function coPlcCard(O) {
+  var rated = O.students.filter(function (s) { return s.plcRated; });
+  var over = [], under = [];
+  O.students.forEach(function (s) { (s.mismatch || []).forEach(function (m) { (m.kind === 'over' ? over : under).push({ s: s, m: m }); }); });
+  var h = '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-1">Confidence vs score <span class="text-xs font-normal text-gray-500">(pupils\' topic checklist – ' + rated.length + ' of ' + O.students.length + ' have rated topics)</span></h4>';
+  if (!rated.length) return h + '<p class="text-sm text-gray-500">No ratings yet. Pupils rate their topics from <b>My checklist</b> (top bar when logged in).</p></div>';
+  var list = function (arr, empty) {
+    if (!arr.length) return '<p class="text-xs text-gray-500">' + empty + '</p>';
+    return arr.slice(0, 10).map(function (x) {
+      return '<div class="co-plc-row text-sm py-0.5"><button type="button" class="co-profile underline decoration-dotted" data-code="' + cpEsc(x.s.code) + '">' + cpEsc(x.s.name) + '</button> – ' + cpEsc(J277.label(x.m.topic)) + ' <span class="text-xs px-1 rounded" style="' + coRag(x.m.pct) + '">' + x.m.pct + '%</span></div>';
+    }).join('') + (arr.length > 10 ? '<div class="text-xs text-gray-500">+' + (arr.length - 10) + ' more</div>' : '');
+  };
+  return h + '<div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-xs font-semibold text-amber-800 mb-1">Over-confident (' + over.length + ') – feel confident, scoring under 50%</div>' + list(over, 'None.') + '</div>' +
+    '<div><div class="text-xs font-semibold text-blue-800 mb-1">Under-confident (' + under.length + ') – not sure, scoring 70%+</div>' + list(under, 'None.') + '</div></div></div>';
 }

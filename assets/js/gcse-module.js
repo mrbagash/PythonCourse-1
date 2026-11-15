@@ -2299,13 +2299,13 @@ async function gcseLoadProfileData(code) {
   history.sort(function (x, y) { return x.at - y.at; });
   var steps = 0, ms = 0;
   Object.keys(prog).forEach(function (k) {
-    if (['assessments', 'gcseQuiz', 'gcseReview', 'gcseMisconceptions', 'forcedAPAssignment'].indexOf(k) !== -1) return;
+    if (['assessments', 'gcseQuiz', 'gcseReview', 'gcseMisconceptions', 'forcedAPAssignment', 'plc', 'dirt'].indexOf(k) !== -1) return;
     var lesson = prog[k]; if (!lesson || typeof lesson !== 'object') return;
     Object.keys(lesson).forEach(function (st) { var x = lesson[st]; if (x && x.completed) steps++; if (x && x.totalMs) ms += x.totalMs; });
   });
   var covered = Object.keys(settings.covered || {}).map(gFromTopicKey);
   return { code: code, className: className, isGcse: isGcse, settings: settings, target: target, access: access, history: history, quiz: prog.gcseQuiz || {},
-    misconceptions: prog.gcseMisconceptions || {}, steps: steps, ms: ms, covered: covered };
+    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, steps: steps, ms: ms, covered: covered };
 }
 
 // Topic scores from official assessments, plus (optionally) live quizzes / practice.
@@ -2390,6 +2390,7 @@ function gcseRenderProfile() {
       '<p class="text-sm text-gray-500">No assessment data on GCSE topics yet' + (o.quizzes || o.practice ? '' : ' – tick Live quizzes or Practice to see quiz data') + '.</p>') +
     '</div><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold mb-2">Misconceptions</h4>' + gcseProfileMisconceptionsHtml(D) +
     '<h4 class="font-bold mt-4 mb-1">Website activity</h4><p class="text-sm">' + D.steps + ' lesson steps completed · ' + Math.round(D.ms / 60000) + ' minutes on lessons</p></div></div>';
+  if (typeof plcProfileHtml === 'function') h += plcProfileHtml(D);
   h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">Progress over time <span class="text-xs font-normal text-gray-500">(official assessments)</span></h4>' +
     gcseProfileChart(D.history.filter(function (x) { return !x.practice && !x.notSubmitted; })) + '</div>';
   // History
