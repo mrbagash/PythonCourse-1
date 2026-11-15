@@ -153,6 +153,7 @@ function classBulkRender() {
       '<span class="text-xs text-gray-500">Year group</span><input id="class-bulk-year" type="number" min="7" max="13" class="border border-gray-300 rounded px-2 py-0.5 text-xs w-14">' +
       '<button type="button" id="class-bulk-apply" class="px-2 py-0.5 rounded border border-gray-300 bg-white text-xs"' + (count ? '' : ' disabled') + '>Apply</button>' +
       '<button type="button" id="class-bulk-archive" class="px-2 py-0.5 rounded border border-gray-300 bg-white text-xs ml-3"' + (count ? '' : ' disabled') + '>Archive selected</button>' +
+      (typeof reportingExport === 'function' ? '<button type="button" id="class-bulk-report" class="px-2 py-0.5 rounded border border-blue-400 text-blue-700 bg-white text-xs font-semibold ml-3"' + (count ? '' : ' disabled') + ' title="One spreadsheet for reports / data drops: a summary, every pupil, and a sheet per class">Reporting export</button>' : '') +
       '<span id="class-bulk-status" class="text-xs text-gray-600"></span></div></div>';
   bar.querySelectorAll('.cb-q').forEach(function (b) {
     b.onclick = function () {
@@ -187,6 +188,8 @@ function classBulkRender() {
     });
     await classBulkSave(updates, 'Updated ' + Object.keys(classBulk.selected).length + ' classes.');
   };
+  var rep = document.getElementById('class-bulk-report');
+  if (rep) rep.onclick = function () { reportingExport(Object.keys(classBulk.selected).sort(), document.getElementById('class-bulk-status')); };
   document.getElementById('class-bulk-archive').onclick = function () {
     var list = Object.keys(classBulk.selected);
     if (!list.length || !confirm('Archive ' + list.length + ' class' + (list.length === 1 ? '' : 'es') + '? Nothing is deleted and you can unarchive them.')) return;

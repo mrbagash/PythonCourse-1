@@ -141,14 +141,17 @@ async function classOverviewData(className, settings, year) {
     if (!s.lastSeen || now - s.lastSeen > TWO_WEEKS) why.push({ k: 'login', t: s.lastSeen ? 'Not logged in for ' + Math.floor((now - s.lastSeen) / 864e5) + ' days' : 'Never logged in' });
     // Feedback tasks (whole-class feedback): still stuck after the new question / 2-week check, or tasks left undone for a week.
     var stuck = [], undone = 0;
+    s.taskTotal = 0; s.taskDone = 0;
     Object.keys(dirt[s.code] || {}).forEach(function (testId) {
       var fs = dirt[s.code][testId] || {};
       Object.keys(fs).forEach(function (fid) {
         var d = fs[fid]; if (!d || typeof d !== 'object') return;
+        s.taskTotal++; if (d.doneAt) s.taskDone++;
         if (d.check ? d.check.mark < d.check.max : (d.transfer && d.transfer.mark < d.transfer.max)) stuck.push(d.title || fid);
         if (!d.doneAt && d.releasedAt && now - d.releasedAt > 7 * 864e5) undone++;
       });
     });
+    s.stuck = stuck;
     if (stuck.length) why.push({ k: 'stuck', t: 'Still stuck: ' + stuck.slice(0, 2).join('; ') + (stuck.length > 2 ? ' +' + (stuck.length - 2) : '') });
     if (undone) why.push({ k: 'tasks', t: undone + ' feedback task' + (undone === 1 ? '' : 's') + ' not done' });
     s.why = why;
@@ -431,7 +434,7 @@ function classOverviewExport(O) {
   var csv = rows.map(function (r) {
     return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',');
   }).join('\r\n');
-  var name = (O.className + ' ' + academicYearLabel(O.year) + ' overview.csv').replace(/[\/:*?"<>|]/g, '-');
+  var name = (O.className + ' ' + academicYearLabel(O.year) + ' overview.csv').replace(/[\\/:*?"<>|]/g, '-');
   var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
@@ -455,4 +458,68 @@ function coPlcCard(O) {
   };
   return h + '<div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><div class="text-xs font-semibold text-amber-800 mb-1">Over-confident (' + over.length + ') – feel confident, scoring under 50%</div>' + list(over, 'None.') + '</div>' +
     '<div><div class="text-xs font-semibold text-blue-800 mb-1">Under-confident (' + under.length + ') – not sure, scoring 70%+</div>' + list(under, 'None.') + '</div></div></div>';
+}
+
+// ── Reporting export: many classes → one spreadsheet ───────────────────────
+// Summary sheet (one row per class), "All pupils" (common columns) and one sheet per class.
+// Names come from the browser only; nothing is written to Firebase.
+function reportingPupilRow(O, s) {
+  return [O.className, s.name === s.code ? '' : s.name, s.code, classTypeLabel(O.settings.type), s.avg == null ? '' : s.avg, s.trend.arrow === '–' ? '' : s.trend.label,
+    s.done + '/' + O.official.length, s.missed.length,
+    s.grade == null ? '' : coGradeLabel(s.grade) + (s.gradeEst ? ' est.' : ''), s.target == null ? '' : coGradeLabel(s.target), s.gap == null ? '' : s.gap,
+    s.papers['1'] ? s.papers['1'].pct : '', s.papers['2'] ? s.papers['2'].pct : '', s.dp == null ? '' : s.dp,
+    s.lastSeen ? new Date(s.lastSeen).toLocaleDateString('en-GB') : 'never', s.taskTotal ? s.taskDone + '/' + s.taskTotal : '', (s.stuck || []).join('; '),
+    (s.mismatch || []).filter(function (m) { return m.kind === 'over'; }).map(function (m) { return m.topic; }).join(' '), s.why.map(function (w) { return w.t; }).join('; ')];
+}
+var REPORT_PUPIL_HEAD = ['Class', 'Name', 'Code', 'Type', 'Average %', 'Trend', 'Done', 'Missed', 'Working grade', 'Target', 'Gap', 'Paper 1 %', 'Paper 2 %', 'Latest DP', 'Last login', 'Feedback tasks done', 'Still stuck', 'Over-confident topics', 'Needs attention'];
+async function reportingBuild(names, onProgress) {
+  var year = currentAcademicYear();
+  var summary = [['Class', 'Type', 'Pupils', 'Official assessments', 'Average %', 'Completion %', 'On or above target %', 'Needs attention', 'Feedback tasks done %']];
+  var pupils = [REPORT_PUPIL_HEAD], perClass = [];
+  for (var i = 0; i < names.length; i++) {
+    if (onProgress) onProgress(i, names.length, names[i]);
+    var settings = {};
+    try { settings = await classSettings(names[i], true); } catch (e) {}
+    var O = await classOverviewData(names[i], settings || {}, year);
+    var S = O.students;
+    var avgs = S.filter(function (s) { return s.avg != null; }).map(function (s) { return s.avg; });
+    var slots = O.official.length * S.length, done = O.official.reduce(function (a, A) { return a + A.done; }, 0);
+    var both = S.filter(function (s) { return s.gap != null; }), onT = both.filter(function (s) { return s.gap >= 0; }).length;
+    var tt = S.reduce(function (a, s) { return a + (s.taskTotal || 0); }, 0), td = S.reduce(function (a, s) { return a + (s.taskDone || 0); }, 0);
+    summary.push([names[i], classTypeLabel(settings.type), S.length, O.official.length, avgs.length ? Math.round(avgs.reduce(function (a, b) { return a + b; }, 0) / avgs.length) : '',
+      slots ? Math.round(done / slots * 100) : '', both.length ? Math.round(onT / both.length * 100) : '', S.filter(function (s) { return s.why.length; }).length, tt ? Math.round(td / tt * 100) : '']);
+    S.forEach(function (s) { pupils.push(reportingPupilRow(O, s)); });
+    perClass.push({ name: names[i], rows: classOverviewCsvRows(O) });
+  }
+  return { year: year, summary: summary, pupils: pupils, perClass: perClass };
+}
+function reportingSheetName(name, used) {
+  var base = String(name).replace(/[\[\]:*?\/\\]/g, '-').slice(0, 28) || 'Class', n = base, k = 2;
+  while (used[n.toLowerCase()]) n = base.slice(0, 26) + ' ' + (k++);
+  used[n.toLowerCase()] = true;
+  return n;
+}
+async function reportingExport(names, statusEl) {
+  if (!names || !names.length) return null;
+  var say = function (m) { if (statusEl) statusEl.textContent = m; };
+  var R;
+  try { R = await reportingBuild(names, function (i, n, name) { say('Building report ' + (i + 1) + '/' + n + ': ' + name + '…'); }); }
+  catch (e) { say('Could not build the report: ' + (e && e.message || e)); return null; }
+  var file = 'Report ' + academicYearLabel(R.year).replace('/', '-') + ' – ' + (names.length === 1 ? names[0] : names.length + ' classes');
+  file = file.replace(/[\\/:*?"<>|]/g, '-');
+  if (typeof XLSX !== 'undefined') {
+    var wb = XLSX.utils.book_new(), used = {};
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(R.summary), reportingSheetName('Summary', used));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(R.pupils), reportingSheetName('All pupils', used));
+    R.perClass.forEach(function (c) { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(c.rows), reportingSheetName(c.name, used)); });
+    XLSX.writeFile(wb, file + '.xlsx');
+  } else {
+    var csv = R.pupils.map(function (r) { return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\r\n');
+    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file + '.csv'; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  say('Report downloaded: ' + names.length + ' class' + (names.length === 1 ? '' : 'es') + ', ' + (R.pupils.length - 1) + ' pupils.');
+  classOverview.lastReport = R;
+  return R;
 }
