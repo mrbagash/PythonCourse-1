@@ -317,7 +317,7 @@ function gcseSetView(view) {
   gcseStatus('');
   if (view === 'tests') return gcseRenderTestsView();
   if (view === 'bank') return gcseRenderBankView();
-  if (view === 'generate') return gcseRenderGenerateView();
+  if (view === 'generate') { gcse.view = 'tests'; return Promise.resolve(gcseRenderTestsView()).then(function () { gcseOpenBuilder('mock'); }); }
   if (view === 'review') return gcseRenderReviewView();
 }
 async function gcseClassOptions(selected) {
@@ -344,6 +344,9 @@ async function gcseRenderTestsView() {
       '<div><label class="block text-xs text-gray-500 mb-1">GCSE class</label><select id="gcse-class" class="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[220px]">' + classOpts + '</select></div>' +
       '<details id="gcse-new-menu" class="relative"><summary class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold cursor-pointer list-none">+ New test ▾</summary>' +
         '<div class="absolute z-20 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-sm">' +
+          menuItem('<button type="button" id="gcse-new-eou" class="w-full text-left"><b>End of unit test</b><span class="block text-xs text-gray-500">Pick a unit (1.1–2.5) – questions generated for you</span></button>') +
+          menuItem('<button type="button" id="gcse-new-mock" class="w-full text-left"><b>Mock</b><span class="block text-xs text-gray-500">Paper 1, Paper 2 or both – everything covered so far</span></button>') +
+          '<div class="border-t border-gray-100 my-1"></div><div class="px-2 pt-1 text-xs text-gray-500">Already sat a test on paper?</div>' +
           menuItem('<button type="button" id="gcse-blank-template" class="w-full text-left"><b>1. Download blank test spreadsheet</b><span class="block text-xs text-gray-500">Has this class\'s names and codes</span></button>') +
           menuItem('<label class="block cursor-pointer"><b>2. Import test spreadsheet</b><span class="block text-xs text-gray-500">Questions + everyone\'s marks in one file</span><input type="file" id="gcse-import-whole" accept=".xlsx,.xls,.csv" class="hidden"></label>') +
           menuItem('<button type="button" id="gcse-new-test" class="w-full text-left"><b>Paste a test map</b><span class="block text-xs text-gray-500">Advanced – from the Topic Codes Guide</span></button>') +
@@ -352,12 +355,14 @@ async function gcseRenderTestsView() {
     '</div><div id="gcse-test-body"></div>' +
     '<details class="mt-6 border border-gray-200 rounded-lg"><summary class="cursor-pointer px-3 py-2 text-sm font-semibold text-gray-700">More tools</summary><div class="flex flex-wrap gap-2 p-3">' +
       '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="bank">Question bank</button>' +
-      '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="generate">Test generator</button>' +
+
       '<button type="button" class="gcse-more px-3 py-1.5 rounded border border-gray-300 text-sm" data-view="review">"I think I\'m right" requests</button>' +
       '<button type="button" id="gcse-guide" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Download Topic Codes Guide</button>' +
     '</div></details>';
   gEl('gcse-class').onchange = function () { gcse.className = this.value; gcse.testId = ''; gcseRenderTest(); };
   gEl('gcse-new-test').onclick = function () { gEl('gcse-new-menu').open = false; gcseRenderNewTestForm(); };
+  gEl('gcse-new-eou').onclick = function () { gEl('gcse-new-menu').open = false; gcseOpenBuilder('eou'); };
+  gEl('gcse-new-mock').onclick = function () { gEl('gcse-new-menu').open = false; gcseOpenBuilder('mock'); };
   gEl('gcse-blank-template').onclick = function () { gEl('gcse-new-menu').open = false; gcseDownloadBlankTemplate(); };
   gEl('gcse-import-whole').onchange = function () { gEl('gcse-new-menu').open = false; if (this.files[0]) gcseHandleWholeImport(this.files[0]); this.value = ''; };
   gEl('gcse-guide').onclick = function () { gDownload('Topic Codes Guide.txt', gcseTopicCodesGuide('test')); };
@@ -509,7 +514,8 @@ async function gcseRenderTestList(box, seq) {
       var max = gcseTestTotal(t);
       var avg = sat.length ? Math.round(sat.reduce(function (s, c) { return s + (Number(res[c].score) || 0); }, 0) / sat.length / Math.max(max, 1) * 100) : null;
       var fb = released[id] && released[id].released;
-      return '<tr class="border-t hover:bg-gray-50"><td class="p-2 font-semibold">' + gEsc(t.title) + '</td><td class="p-2 text-xs text-gray-500">' + (t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '') + '</td>' +
+      var kind = t.kind === 'eou' ? 'End of unit' : t.kind === 'mock' ? 'Mock' : 'Test';
+      return '<tr class="border-t hover:bg-gray-50"><td class="p-2 font-semibold">' + gEsc(t.title) + '<div class="text-xs font-normal text-gray-500">' + kind + (t.mode === 'online' ? ' · online' : t.mode === 'paper' ? ' · on paper' : '') + '</div></td><td class="p-2 text-xs text-gray-500">' + (t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '') + '</td>' +
         '<td class="p-2 text-center">' + (sat.length ? sat.length : '<span class="text-gray-400">no marks yet</span>') + '</td>' +
         '<td class="p-2 text-center">' + (avg == null ? '–' : '<span class="px-1.5 rounded font-bold text-xs" style="' + gRag(avg) + '">' + avg + '%</span>') + '</td>' +
         '<td class="p-2 text-xs">' + (fb ? '<span class="text-green-700">✓ Released</span>' : '<span class="text-gray-500">Not released</span>') + '</td>' +
@@ -543,6 +549,8 @@ async function gcseRenderTestView(box, seq) {
         '<label class="block px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">Upload corrected marks<input type="file" id="gcse-upload" accept=".xlsx,.xls,.csv" class="hidden"></label>' +
         '<button type="button" id="gcse-print-slips" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Print feedback slips</button>' +
         '<button type="button" id="gcse-export" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Export grades (CSV)</button>' : '') +
+      ((t.questions || []).some(function (q) { return q.text; }) ? '<button type="button" id="gcse-print-paper" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Print paper</button>' +
+        '<button type="button" id="gcse-print-scheme" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Print mark scheme</button>' : '') +
       '<button type="button" id="gcse-edit-test" class="block w-full text-left px-2 py-1.5 rounded hover:bg-gray-50">Grade boundaries / rename / delete</button>' +
     '</div></details>';
   var h = '<div class="flex items-center gap-3 mb-1"><button type="button" id="gcse-back-list" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
@@ -550,6 +558,9 @@ async function gcseRenderTestView(box, seq) {
     '<div class="flex items-center gap-1 border-b border-gray-200 mb-3">' +
       (hasResults ? tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') : tabBtn('marks', 'Add marks')) +
       menu + '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div><div id="gcse-tab-body">';
+  if (tab === 'marks' && t.mode === 'online') {
+    h += '<div class="rounded border border-green-200 bg-green-50 p-4 text-sm text-green-900 mb-3"><b>Online test – ready to run.</b> Start it with the class from <b>Classes → Start AP</b>, or give it to absent students with <b>Force AP</b>. Results appear here as students submit.</div>';
+  }
   if (tab === 'marks') {
     h += '<div class="rounded border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"><b>No marks yet.</b> Download the marks spreadsheet (every student\'s name and code is already in it), type in the marks, then upload it.' +
       ' Use <b>ABS</b> for absent students and leave a cell <b>blank</b> if a question was not attempted.' +
@@ -568,6 +579,8 @@ async function gcseRenderTestView(box, seq) {
   gEl('gcse-dl-template').onclick = function () { var m = gEl('gcse-more-menu'); if (m) m.open = false; gcseDownloadTemplate(t, rows); };
   gEl('gcse-upload').onchange = function () { var m = gEl('gcse-more-menu'); if (m) m.open = false; if (this.files[0]) gcseHandleUpload(this.files[0]); this.value = ''; };
   gEl('gcse-edit-test').onclick = function () { gEl('gcse-more-menu').open = false; gcseRenderSettings(t); };
+  if (gEl('gcse-print-paper')) gEl('gcse-print-paper').onclick = function () { gEl('gcse-more-menu').open = false; gcsePrintPaper(t, false); };
+  if (gEl('gcse-print-scheme')) gEl('gcse-print-scheme').onclick = function () { gEl('gcse-more-menu').open = false; gcsePrintPaper(t, true); };
   if (hasResults) gcseBindWcf(t, rows);
 }
 
@@ -1623,6 +1636,234 @@ async function gcseStartFromHostSetup() {
   }
   setSource('lesson');
 })();
+
+// ── Test builder: End of unit test / Mock (online or paper) ─────────────
+var GCSE_QTYPES = [
+  { k: 'mcq', label: 'Multiple choice', match: function (r) { return r.type === 'mcq'; } },
+  { k: 'w1', label: '1-mark written', match: function (r) { return r.type === 'short' && r.marks === 1; } },
+  { k: 'w2', label: '2-mark written', match: function (r) { return r.type === 'short' && r.marks >= 2; } },
+  { k: 'long', label: 'Longer written (3+ marks)', match: function (r) { return r.type === 'long'; } },
+  { k: 'paper', label: 'Paper-only (diagrams, trace tables)', match: function (r) { return r.type === 'paper'; }, paperOnly: true }
+];
+function gcseUnits() { return J277.list.filter(function (n) { return n.level === 1; }); }
+
+async function gcseOpenBuilder(kind) {
+  if (!gcse.className) { gcseStatus('Choose a class first.', true); return; }
+  var covered = [];
+  try { covered = await classCoveredTopics(gcse.className); } catch (e) {}
+  gcse.builder = {
+    kind: kind, unit: '', paper: '', mode: 'online', types: { mcq: true, w1: true, w2: true, long: true, paper: false },
+    marks: kind === 'eou' ? 30 : 60, difficulty: '', includeStarter: true, topics: {}, items: [], covered: covered
+  };
+  gcseRenderBuilder();
+}
+function gcseBuilderPool() {
+  var b = gcse.builder;
+  return gcseBankUsable().filter(function (v) {
+    var r = v.row;
+    if (!b.includeStarter && r.starter) return false;
+    if (b.difficulty && r.difficulty && r.difficulty !== b.difficulty) return false;
+    if (b.mode === 'online' && r.type === 'paper') return false;
+    return GCSE_QTYPES.some(function (t) { return b.types[t.k] && t.match(r); });
+  });
+}
+function gcseBuilderTopics() {
+  var b = gcse.builder;
+  if (b.kind === 'eou') return b.unit ? J277.subTopics().filter(function (s) { return s.code.indexOf(b.unit + '.') === 0; }).map(function (s) { return s.code; }) : [];
+  return Object.keys(b.topics).filter(function (k) { return b.topics[k]; });
+}
+function gcseBuilderTotal() { return gcse.builder.items.reduce(function (s, it) { return s + (Number(it.marks) || 0); }, 0); }
+
+function gcseRenderBuilder() {
+  var b = gcse.builder, box = gEl('gcse-test-body');
+  if (!box || !b) return;
+  var isEou = b.kind === 'eou';
+  var h = '<div class="border border-gray-200 rounded-lg p-4 space-y-4"><div class="flex items-center gap-3"><button type="button" id="gcse-b-cancel" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
+    '<h3 class="text-lg font-bold text-gray-800">' + (isEou ? 'New end of unit test' : 'New mock') + ' – ' + gEsc(gcse.className) + '</h3></div>';
+  // 1. What
+  h += '<div><div class="text-sm font-semibold mb-1">1. What is it on?</div>';
+  if (isEou) {
+    h += '<select id="gcse-b-unit" class="border border-gray-300 rounded px-2 py-1.5 text-sm"><option value="">— choose unit —</option>' +
+      gcseUnits().map(function (u) { return '<option value="' + gEsc(u.code) + '"' + (b.unit === u.code ? ' selected' : '') + '>' + gEsc(u.code + ' ' + u.title) + '</option>'; }).join('') + '</select>';
+  } else {
+    h += '<div class="flex flex-wrap gap-2 items-center mb-2"><select id="gcse-b-paper" class="border border-gray-300 rounded px-2 py-1.5 text-sm"><option value="">Paper 1 and Paper 2</option><option value="1"' + (b.paper === '1' ? ' selected' : '') + '>Paper 1 only</option><option value="2"' + (b.paper === '2' ? ' selected' : '') + '>Paper 2 only</option></select>' +
+      '<button type="button" id="gcse-b-covered" class="px-3 py-1.5 rounded border border-gray-300 text-sm"' + (b.covered.length ? '' : ' disabled title="Set content covered on the Class page first"') + '>Everything covered so far (' + b.covered.length + ' topics)</button>' +
+      '<span class="text-xs text-gray-500">or tick topics:</span></div>' + gcseTopicPickerHtml('gcse-b', b.topics);
+  }
+  h += '</div>';
+  // 2. How
+  h += '<div class="flex flex-wrap gap-6"><div><div class="text-sm font-semibold mb-1">2. How will they sit it?</div>' +
+    ['online:On the website', 'paper:On paper'].map(function (o) { var k = o.split(':'); return '<label class="mr-3 text-sm"><input type="radio" name="gcse-b-mode" value="' + k[0] + '"' + (b.mode === k[0] ? ' checked' : '') + '> ' + k[1] + '</label>'; }).join('') + '</div>' +
+    '<div><div class="text-sm font-semibold mb-1">3. Question types</div><div class="flex flex-wrap gap-x-3 gap-y-1">' + GCSE_QTYPES.filter(function (t) { return !(t.paperOnly && b.mode === 'online'); }).map(function (t) {
+      return '<label class="text-sm"><input type="checkbox" class="gcse-b-type" data-k="' + t.k + '"' + (b.types[t.k] ? ' checked' : '') + '> ' + t.label + '</label>';
+    }).join('') + '</div></div>' +
+    '<label class="text-sm font-semibold">Total marks<input id="gcse-b-marks" type="number" min="5" max="200" value="' + b.marks + '" class="block w-24 border border-gray-300 rounded px-2 py-1 text-sm font-normal"></label>' +
+    '<label class="text-sm font-semibold">Difficulty<select id="gcse-b-difficulty" class="block border border-gray-300 rounded px-2 py-1 text-sm font-normal"><option value="">Any</option><option value="F"' + (b.difficulty === 'F' ? ' selected' : '') + '>Foundation-style</option><option value="H"' + (b.difficulty === 'H' ? ' selected' : '') + '>Higher-style</option></select></label></div>' +
+    '<label class="text-xs text-gray-600 flex items-center gap-1.5"><input type="checkbox" id="gcse-b-starter"' + (b.includeStarter ? ' checked' : '') + '> Use the built-in J277 exam-style starter questions as well as your past papers</label>' +
+    '<div><button type="button" id="gcse-b-generate" class="jhncc-primary px-4 py-1.5 rounded text-sm font-semibold">' + (b.items.length ? 'Regenerate' : 'Generate questions') + '</button> <span id="gcse-b-msg" class="text-xs text-red-600"></span></div>';
+  // 4. Questions
+  if (b.items.length) h += gcseBuilderListHtml();
+  h += '</div>';
+  box.innerHTML = h;
+  gcseBindBuilder();
+}
+
+function gcseBuilderListHtml() {
+  var b = gcse.builder;
+  var total = gcseBuilderTotal();
+  var cov = {};
+  b.items.forEach(function (it) { (it.topics || []).forEach(function (t) { cov[t] = (cov[t] || 0) + (Number(it.marks) || 0); }); });
+  var h = '<div class="border-t pt-3"><div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div class="text-sm font-semibold">4. Check and customise the questions</div>' +
+    '<div class="text-sm">Total: <b id="gcse-b-total">' + total + '</b> / ' + b.marks + ' marks · ' + b.items.length + ' questions</div></div>' +
+    '<div class="flex flex-wrap gap-1 mb-2">' + Object.keys(cov).sort().map(function (t) { return '<span class="text-[11px] px-1.5 py-0.5 rounded bg-gray-100" title="' + gEsc(J277.label(t)) + '">' + gEsc(t) + ' · ' + cov[t] + 'm</span>'; }).join('') + '</div><div class="space-y-2">';
+  b.items.forEach(function (it, i) {
+    h += '<div class="border border-gray-200 rounded p-2 text-sm"><div class="flex items-start gap-2"><b class="w-8 shrink-0">Q' + (i + 1) + '</b>' +
+      '<textarea class="gcse-b-text flex-1 border border-gray-200 rounded px-2 py-1 text-sm" rows="2" data-i="' + i + '">' + gEsc(it.text) + '</textarea>' +
+      '<label class="text-xs text-gray-500 shrink-0">marks<input type="number" min="1" max="20" class="gcse-b-qmarks block w-14 border border-gray-300 rounded px-1 py-0.5 text-sm" data-i="' + i + '" value="' + it.marks + '"></label></div>' +
+      (it.type === 'mcq' ? '<div class="ml-10 text-xs text-gray-600">' + it.options.map(function (o, k) { return (k === it.answerIndex ? '<b>' : '') + String.fromCharCode(65 + k) + '. ' + gEsc(o) + (k === it.answerIndex ? ' ✓</b>' : ''); }).join(' · ') + '</div>' : '') +
+      '<div class="ml-10 mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500"><span>' + gEsc(J277.label(it.topics[0])) + '</span><span>· ' + gEsc(it.typeLabel) + '</span><span>· ' + gEsc(it.source) + '</span>' +
+      '<span class="ml-auto flex gap-1"><button type="button" class="gcse-b-up px-1.5 rounded border border-gray-300" data-i="' + i + '" title="Move up">↑</button>' +
+      '<button type="button" class="gcse-b-down px-1.5 rounded border border-gray-300" data-i="' + i + '" title="Move down">↓</button>' +
+      '<button type="button" class="gcse-b-swap px-1.5 rounded border border-gray-300" data-i="' + i + '" title="Swap for another question on this topic">Swap</button>' +
+      '<button type="button" class="gcse-b-remove px-1.5 rounded border border-red-300 text-red-600" data-i="' + i + '">Remove</button></span></div></div>';
+  });
+  h += '</div><div class="flex flex-wrap items-center gap-2 mt-2"><select id="gcse-b-add-topic" class="border border-gray-300 rounded px-2 py-1 text-sm"><option value="">+ Add a question on…</option>' +
+    gcseBuilderTopics().map(function (t) { return '<option value="' + gEsc(t) + '">' + gEsc(J277.label(t)) + '</option>'; }).join('') + '</select><div id="gcse-b-add-list" class="w-full"></div></div>' +
+    '<div class="flex flex-wrap items-end gap-2 mt-4 border-t pt-3"><label class="text-xs text-gray-600">Title<input id="gcse-b-title" class="block w-80 border border-gray-300 rounded px-2 py-1.5 text-sm" value="' + gEsc(b.title || gcseBuilderDefaultTitle()) + '"></label>' +
+    '<button type="button" id="gcse-b-save" class="jhncc-primary px-4 py-1.5 rounded text-sm font-semibold">Save test</button>' +
+    '<button type="button" id="gcse-b-print" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Print paper</button>' +
+    '<button type="button" id="gcse-b-scheme" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Print mark scheme</button></div></div>';
+  return h;
+}
+function gcseBuilderDefaultTitle() {
+  var b = gcse.builder;
+  if (b.kind === 'eou') { var u = J277.get(b.unit); return (u ? 'Unit ' + u.code + ' ' + u.title : 'Unit') + ' – End of unit test'; }
+  return 'Mock' + (b.paper ? ' – Paper ' + b.paper : ' – Paper 1 & 2') + ' – ' + new Date().toLocaleDateString('en-GB');
+}
+function gcseBuilderItem(v) {
+  var r = v.row;
+  var t = GCSE_QTYPES.filter(function (x) { return x.match(r); })[0];
+  return { bankId: r.id, type: r.type, typeLabel: t ? t.label : r.type, text: r.question, marks: r.marks, topics: r.topics.slice(), command: r.command || '',
+    options: r.options.slice(), answerIndex: r.answerIndex, rules: r.rules || '', markScheme: r.markScheme || '', codes: (r.codes || []).slice(),
+    source: r.source || ('reworded from ' + r.rewordedFrom), family: (r.rewordedFrom || r.id).toLowerCase(), difficulty: r.difficulty || '' };
+}
+function gcseBuilderGenerate() {
+  var b = gcse.builder;
+  var topics = gcseBuilderTopics();
+  var msg = gEl('gcse-b-msg');
+  if (!topics.length) { msg.textContent = b.kind === 'eou' ? 'Choose a unit.' : 'Tick topics or use "Everything covered so far".'; return; }
+  var res = gcseGenerate(gcseBuilderPool(), topics, b.marks, b.kind === 'mock' ? b.paper : '', gcseCoverage(gcse.className), {});
+  if (!res.questions.length) { msg.textContent = 'No bank questions match – tick more question types, or the starter questions.'; return; }
+  b.items = res.questions.map(gcseBuilderItem);
+  b.title = '';
+  gcseRenderBuilder();
+  if (res.shortBy) gEl('gcse-b-msg').textContent = 'Only ' + res.total + ' marks available for these settings (' + res.shortBy + ' short). Add more past-paper questions or tick more types.';
+}
+function gcseBuilderReadEdits() {
+  var b = gcse.builder;
+  document.querySelectorAll('.gcse-b-text').forEach(function (el) { b.items[Number(el.dataset.i)].text = el.value; });
+  document.querySelectorAll('.gcse-b-qmarks').forEach(function (el) { var n = Number(el.value); if (n > 0) b.items[Number(el.dataset.i)].marks = n; });
+  var title = gEl('gcse-b-title'); if (title) b.title = title.value;
+}
+function gcseBindBuilder() {
+  var b = gcse.builder;
+  var rerender = function () { gcseBuilderReadEdits(); gcseRenderBuilder(); };
+  gEl('gcse-b-cancel').onclick = function () { gcse.builder = null; gcseRenderTest(); };
+  var unit = gEl('gcse-b-unit'); if (unit) unit.onchange = function () { b.unit = this.value; b.title = ''; };
+  var paper = gEl('gcse-b-paper'); if (paper) paper.onchange = function () { b.paper = this.value; b.title = ''; };
+  if (gEl('gcse-b-covered')) gEl('gcse-b-covered').onclick = function () {
+    b.topics = {};
+    b.covered.forEach(function (t) { if (!b.paper || GcseCore.paperOf(t) === b.paper) b.topics[t] = true; });
+    rerender();
+  };
+  if (document.querySelector('.gcse-b-topic')) {
+    gcseBindTopicPicker('gcse-b');
+    document.querySelectorAll('.gcse-b-topic').forEach(function (cb) {
+      cb.addEventListener('change', function () { b.topics = {}; gcsePickedTopics('gcse-b').forEach(function (t) { b.topics[t] = true; }); });
+    });
+  }
+  document.querySelectorAll('input[name="gcse-b-mode"]').forEach(function (r) { r.onchange = function () { b.mode = this.value; if (b.mode === 'online') b.types.paper = false; rerender(); }; });
+  document.querySelectorAll('.gcse-b-type').forEach(function (cb) { cb.onchange = function () { b.types[cb.dataset.k] = cb.checked; }; });
+  gEl('gcse-b-marks').onchange = function () { b.marks = Number(this.value) || b.marks; };
+  gEl('gcse-b-difficulty').onchange = function () { b.difficulty = this.value; };
+  gEl('gcse-b-starter').onchange = function () { b.includeStarter = this.checked; };
+  gEl('gcse-b-generate').onclick = gcseBuilderGenerate;
+  if (!b.items.length) return;
+  document.querySelectorAll('.gcse-b-text, .gcse-b-qmarks').forEach(function (el) {
+    el.addEventListener('input', function () { gcseBuilderReadEdits(); var t = gEl('gcse-b-total'); if (t) t.textContent = gcseBuilderTotal(); });
+  });
+  var move = function (i, d) { var j = i + d; if (j < 0 || j >= b.items.length) return; var x = b.items[i]; b.items[i] = b.items[j]; b.items[j] = x; };
+  document.querySelectorAll('.gcse-b-up').forEach(function (el) { el.onclick = function () { gcseBuilderReadEdits(); move(Number(el.dataset.i), -1); gcseRenderBuilder(); }; });
+  document.querySelectorAll('.gcse-b-down').forEach(function (el) { el.onclick = function () { gcseBuilderReadEdits(); move(Number(el.dataset.i), 1); gcseRenderBuilder(); }; });
+  document.querySelectorAll('.gcse-b-remove').forEach(function (el) { el.onclick = function () { gcseBuilderReadEdits(); b.items.splice(Number(el.dataset.i), 1); gcseRenderBuilder(); }; });
+  document.querySelectorAll('.gcse-b-swap').forEach(function (el) {
+    el.onclick = function () {
+      gcseBuilderReadEdits();
+      var i = Number(el.dataset.i), cur = b.items[i];
+      var used = {}; b.items.forEach(function (it) { used[it.family] = true; });
+      var options = gcseBuilderPool().filter(function (v) { return v.row.topics[0] === cur.topics[0] && !used[(v.row.rewordedFrom || v.row.id).toLowerCase()]; });
+      if (!options.length) { gEl('gcse-b-msg').textContent = 'No other questions on ' + J277.label(cur.topics[0]) + ' – try "+ Add a question on…".'; return; }
+      b.items[i] = gcseBuilderItem(options[Math.floor(Math.random() * options.length)]);
+      gcseRenderBuilder();
+    };
+  });
+  gEl('gcse-b-add-topic').onchange = function () {
+    var topic = this.value, list = gEl('gcse-b-add-list');
+    if (!topic) { list.innerHTML = ''; return; }
+    var used = {}; b.items.forEach(function (it) { used[it.family] = true; });
+    var options = gcseBuilderPool().filter(function (v) { return v.row.topics[0] === topic && !used[(v.row.rewordedFrom || v.row.id).toLowerCase()]; });
+    list.innerHTML = options.length ? options.map(function (v, k) {
+      return '<div class="flex items-center gap-2 border-t py-1 text-xs"><button type="button" class="gcse-b-add px-2 py-0.5 rounded border border-gray-300" data-k="' + k + '">Add</button><span>' + gEsc(v.row.question) + '</span><span class="text-gray-500">[' + v.row.marks + ']</span></div>';
+    }).join('') : '<p class="text-xs text-gray-500">No more questions on this topic.</p>';
+    list.querySelectorAll('.gcse-b-add').forEach(function (btn) {
+      btn.onclick = function () { gcseBuilderReadEdits(); b.items.push(gcseBuilderItem(options[Number(btn.dataset.k)])); gcseRenderBuilder(); };
+    });
+  };
+  gEl('gcse-b-print').onclick = function () { gcseBuilderReadEdits(); gcsePrintPaper(gcseBuilderToTest(), false); };
+  gEl('gcse-b-scheme').onclick = function () { gcseBuilderReadEdits(); gcsePrintPaper(gcseBuilderToTest(), true); };
+  gEl('gcse-b-save').onclick = gcseBuilderSave;
+}
+function gcseBuilderToTest() {
+  var b = gcse.builder;
+  var total = gcseBuilderTotal();
+  return {
+    title: (b.title || gcseBuilderDefaultTitle()).trim(), className: gcse.className, createdAt: Date.now(), kind: b.kind, unit: b.unit || null,
+    paper: b.kind === 'mock' ? (b.paper || 'both') : null, mode: b.mode, paperTotal: total, showGrades: false,
+    boundaries: GcseCore.defaultBoundaries(total),
+    questions: b.items.map(function (it, i) {
+      return { id: 'Q' + (i + 1), marks: Number(it.marks) || 1, topics: it.topics, command: it.command, bankId: it.bankId, type: it.type, text: it.text,
+        options: it.options, answerIndex: it.answerIndex == null ? null : it.answerIndex, rules: it.rules, markScheme: it.markScheme, codes: it.codes, source: it.source };
+    })
+  };
+}
+async function gcseBuilderSave() {
+  gcseBuilderReadEdits();
+  var t = gcseBuilderToTest();
+  if (!t.questions.length) return;
+  var id = 'gcse-' + Date.now().toString(36);
+  try {
+    await state.db.ref('gcse/tests/' + id).set(t);
+    gcse.tests[id] = t; gcse.testId = id; gcse.viewTab = 'grades'; gcse.builder = null;
+    await gcseRenderTest();
+    gcseStatus('Saved "' + t.title + '" (' + gcseTestTotal(t) + ' marks).' + (t.mode === 'paper' ? ' Print it from the ⋯ menu, then download the marks spreadsheet.' : ''));
+  } catch (e) { gcseStatus(gDbError(e), true); }
+}
+// Print a saved/built test – the paper, or its mark scheme.
+function gcsePrintPaper(t, scheme) {
+  var qs = t.questions || [];
+  var body = '<h1>' + gEsc(t.title) + (scheme ? ' – Mark scheme' : '') + '</h1><div class="muted">' + gEsc(t.className || '') + ' · ' + gcseTestTotal(t) + ' marks</div>' +
+    (scheme ? '' : '<p>Name: ______________________________</p>') +
+    qs.map(function (q, i) {
+      if (scheme) {
+        return '<div class="q"><b>' + gEsc(q.id) + '</b> [' + q.marks + '] <span class="muted">' + gEsc(J277.label((q.topics || [])[0])) + (q.source ? ' · ' + gEsc(q.source) : '') + '</span><br>' +
+          (q.type === 'mcq' && q.options ? 'Answer: ' + String.fromCharCode(65 + q.answerIndex) + '. ' + gEsc(q.options[q.answerIndex]) : gEsc(q.markScheme || '').replace(/\n/g, '<br>')) + '</div>';
+      }
+      var lines = new Array(Math.max(2, (q.marks || 1) * 2) + 1).join('<div class="lines"></div>');
+      return '<div class="q"><b>' + gEsc(q.id) + '.</b> ' + gEsc(q.text || '').replace(/\n/g, '<br>') + ' <b>[' + q.marks + ']</b>' +
+        (q.type === 'mcq' && q.options ? '<ol type="A">' + q.options.map(function (o) { return '<li>' + gEsc(o) + '</li>'; }).join('') + '</ol>' : lines) + '</div>';
+    }).join('');
+  gPrint(t.title + (scheme ? ' – Mark scheme' : ''), body);
+}
 
 // ── Test generator (past-paper questions only) ──────────────────
 function gcseGeneratorPool() {
