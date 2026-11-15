@@ -825,7 +825,22 @@
       <h2 class="text-lg font-semibold">&#x1F3AE; Host a Quiz</h2>
       <button id="btn-quiz-setup-close" class="text-gray-400 hover:text-gray-600 text-xl">&#x2715;</button>
     </div>
+    <div class="flex gap-2 mb-3">
+      <button type="button" id="quiz-source-lesson-btn" class="flex-1 px-3 py-1.5 rounded border text-sm font-semibold">Lesson quiz</button>
+      <button type="button" id="quiz-source-gcse-btn" class="flex-1 px-3 py-1.5 rounded border text-sm font-semibold">GCSE question bank</button>
+    </div>
     <div class="flex-1 min-h-0 overflow-y-auto pr-1">
+      <div id="quiz-source-gcse" class="hidden mb-3">
+        <p class="text-xs text-gray-600 mb-2">Tick the topics to quiz. Questions come from the GCSE question bank (built-in starter questions plus your Google Sheet bank). Written answers are marked with keyword marking.</p>
+        <div class="grid grid-cols-3 gap-3 mb-2">
+          <label class="text-xs text-gray-500">Number of questions<input id="quiz-gcse-count" type="number" min="1" max="30" value="10" class="jhncc-focus w-full border border-gray-300 rounded px-2 py-1.5 text-sm"></label>
+          <label class="text-xs text-gray-500">Seconds per question<input id="quiz-gcse-time" type="number" min="10" max="300" value="60" class="jhncc-focus w-full border border-gray-300 rounded px-2 py-1.5 text-sm"></label>
+          <label class="text-xs text-gray-600 flex items-end gap-1.5 pb-1.5"><input id="quiz-gcse-short" type="checkbox" checked> Include written answers</label>
+        </div>
+        <div id="quiz-gcse-summary" class="text-xs text-gray-600 mb-1"></div>
+        <div id="quiz-gcse-topics"></div>
+      </div>
+      <div id="quiz-source-lesson">
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div>
           <label class="block text-xs text-gray-500 mb-1">Year group</label>
@@ -870,6 +885,7 @@
       <div id="quiz-custom-opts" class="hidden border border-gray-200 rounded-lg p-4 mb-3 max-h-64 overflow-y-auto">
         <p class="text-xs text-gray-500 mb-2">Select questions and set time per question:</p>
         <div id="quiz-custom-list" class="space-y-2"></div>
+      </div>
       </div>
       <label class="flex items-start gap-2 border border-red-200 bg-red-50 rounded-lg p-3 mb-3 cursor-pointer">
         <input id="quiz-force-class" type="checkbox" class="mt-0.5 accent-[rgb(176,28,35)]" />
@@ -1563,7 +1579,8 @@
 <script src="assets/js/hex-machine-module.js?v=20260712a"></script>
 <script src="assets/js/binary-mine-3d-module.js?v=20260703i"></script>
 <script src="assets/js/j277-topics.js?v=20261115a"></script>
-<script src="assets/js/gcse-core.js?v=20261115a"></script>
-<script src="assets/js/gcse-module.js?v=20261115a"></script>
+<script src="assets/js/gcse-core.js?v=20261115b"></script>
+<script src="assets/js/gcse-starter-bank.js?v=20261115b"></script>
+<script src="assets/js/gcse-module.js?v=20261115b"></script>
 </body>
 </html>

@@ -32,7 +32,8 @@ var GcseCore = (function () {
     ['random access memory', 'ram'], ['read only memory', 'rom'], ['read-only memory', 'rom'],
     ['central processing unit', 'cpu'], ['accumulator', 'acc']
   ];
-  var CONFUSABLE_SUBJECTS = ['mar', 'mdr', 'pc', 'acc', 'cir', 'alu', 'cu', 'cache', 'ram', 'rom', 'cpu', 'gpu', 'register', 'hdd', 'ssd'];
+  var CONFUSABLE_SUBJECTS = ['mar', 'mdr', 'pc', 'acc', 'cir', 'alu', 'cu', 'cache', 'ram', 'rom', 'cpu', 'gpu', 'register', 'hdd', 'ssd',
+    'compiler', 'interpreter', 'assembler', 'router', 'switch', 'lan', 'wan'];
   var NEGATIONS = ['not', 'dont', 'doesnt', 'never', 'cannot', 'cant', 'isnt', 'arent', 'wont', 'no'];
   var PREPOSITIONS = ['of', 'from', 'to', 'in', 'at', 'by', 'for', 'into', 'with', 'on', 'about', 'within', 'inside', 'via', 'through', 'onto'];
   var COORDINATORS = ['and', 'or', 'nor'];
@@ -116,12 +117,13 @@ var GcseCore = (function () {
       if (m) { weight = Number(m[1]); line = m[2].trim(); }
       var norm = normaliseText(line);
       if (norm.charAt(0) === '=') {
-        var body = norm.slice(1).trim();
-        var mode = body.indexOf('&') !== -1 ? 'all' : 'any';
-        var terms = body.split(mode === 'all' ? '&' : '|').map(function (t) { return tokens(t).map(stem); })
-          .filter(function (t) { return t.length; });
-        if (!terms.length) { out.errors.push('Line ' + (idx + 1) + ': keyword point has no words'); return; }
-        out.points.push({ kind: 'keyword', mode: mode, terms: terms, weight: weight, line: rawLine.trim() });
+        // "=a|b"      → any of a, b
+        // "=a & b|c"  → a AND (b or c)
+        var groups = norm.slice(1).split('&').map(function (part) {
+          return part.split('|').map(function (t) { return tokens(t).map(stem); }).filter(function (t) { return t.length; });
+        }).filter(function (g) { return g.length; });
+        if (!groups.length) { out.errors.push('Line ' + (idx + 1) + ': keyword point has no words'); return; }
+        out.points.push({ kind: 'keyword', groups: groups, weight: weight, line: rawLine.trim() });
         return;
       }
       var subject = null;
@@ -141,8 +143,8 @@ var GcseCore = (function () {
   }
 
   // ── Marking ──────────────────────────────────────────────────
-  function isNegated(clause, idx) {
-    for (var k = Math.max(0, idx - 3); k < idx; k++) if (NEGATIONS.indexOf(clause[k]) !== -1) return true;
+  function isNegated(clause, idx, windowSize) {
+    for (var k = Math.max(0, idx - (windowSize || 3)); k < idx; k++) if (NEGATIONS.indexOf(clause[k]) !== -1) return true;
     return false;
   }
 
@@ -182,7 +184,7 @@ var GcseCore = (function () {
       if (mentionsOther && !mentionsRequired) return { result: 'other-subject' };
     }
     // Direct objects (not governed by a preposition).
-    var accepted = [], rejected = [], fuzzy = false, anyKey = false;
+    var accepted = [], rejected = [], fuzzy = false, anyKey = false, lastDirect = null;
     for (var i = 0; i < region.length; i++) {
       var acc = point.accept.filter(function (sp) { return specMatches(sp, region, i); });
       var rej = point.reject.filter(function (sp) { return specMatches(sp, region, i); });
@@ -192,15 +194,14 @@ var GcseCore = (function () {
       var direct = true;
       for (var b = i - 1, steps = 0; b >= 0 && steps < 3; b--, steps++) {
         if (PREPOSITIONS.indexOf(region[b]) !== -1) { direct = false; break; }
-        if (COORDINATORS.indexOf(region[b]) !== -1) break;
+        // "X of the data or instruction": a word joined by and/or takes the role of the word before it.
+        if (COORDINATORS.indexOf(region[b]) !== -1) { if (lastDirect !== null) direct = lastDirect; break; }
       }
+      lastDirect = direct;
       if (!direct) continue;
       if (acc.length) { accepted.push(region[i]); if (acc.some(function (sp) { return wordMatches(region[i], sp.main) === 'fuzzy'; })) fuzzy = true; }
+      // A key noun that matches neither (e.g. "address" without "next") is incomplete, not wrong.
       if (rej.length && !acc.length) rejected.push(region[i]);
-      else if (!acc.length && isKeyNoun) {
-        // A key noun that matches neither the accepted spec (e.g. qualifier missing) nor a reject – treat as wrong thing.
-        rejected.push(region[i]);
-      }
     }
     if (negated) return { result: accepted.length ? 'denies-correct' : 'neutral' };
     if (accepted.length && rejected.length) return { result: 'hedge' };
@@ -245,10 +246,10 @@ var GcseCore = (function () {
     function found(term) {
       return clauses.some(function (c) {
         var at = phraseIn(c, term);
-        return at !== -1 && !isNegated(c, at);
+        return at !== -1 && !isNegated(c, at, 5);
       });
     }
-    var ok = point.mode === 'all' ? point.terms.every(found) : point.terms.some(found);
+    var ok = point.groups.every(function (alternatives) { return alternatives.some(found); });
     return ok ? { awarded: point.weight, reason: 'Correct' } : { awarded: 0, reason: 'Key idea missing' };
   }
 
@@ -351,6 +352,47 @@ var GcseCore = (function () {
     }
     return any ? 0 : null;
   }
+  // Default boundaries: OCR J277 June 2024 overall boundaries (out of 160) as percentages,
+  // scaled to the test's total. 9:136 8:126 7:117 6:102 5:87 4:72 3:52 2:32 1:13
+  var DEFAULT_BOUNDARY_SOURCE = { max: 160, label: 'OCR J277 June 2024', marks: { 9: 136, 8: 126, 7: 117, 6: 102, 5: 87, 4: 72, 3: 52, 2: 32, 1: 13 } };
+  function defaultBoundaries(total) {
+    total = Number(total);
+    if (!(total > 0)) return null;
+    var out = {}, prev = Infinity;
+    for (var g = 9; g >= 1; g--) {
+      var m = Math.round(DEFAULT_BOUNDARY_SOURCE.marks[g] / DEFAULT_BOUNDARY_SOURCE.max * total);
+      if (m >= prev) m = prev - 1;           // keep every grade reachable on short tests
+      out[g] = Math.max(m, 0);
+      prev = out[g];
+    }
+    return out;
+  }
+  // Component (paper) boundaries, OCR J277 June 2024, each out of 80.
+  var COMPONENT_BOUNDARY_SOURCE = {
+    '1': { max: 80, label: 'Paper 1 (J277/01 Computer systems)', marks: { 9: 65, 8: 61, 7: 58, 6: 51, 5: 44, 4: 38, 3: 27, 2: 17, 1: 7 } },
+    '2': { max: 80, label: 'Paper 2 (J277/02 Computational thinking, algorithms and programming)', marks: { 9: 71, 8: 65, 7: 59, 6: 51, 5: 43, 4: 34, 3: 25, 2: 15, 1: 6 } }
+  };
+  function scaleBoundaries(src, total) {
+    total = Number(total);
+    if (!(total > 0)) return null;
+    var out = {}, prev = Infinity;
+    for (var g = 9; g >= 1; g--) {
+      var m = Math.round(src.marks[g] / src.max * total);
+      if (m >= prev) m = prev - 1;
+      out[g] = Math.max(m, 0);
+      prev = out[g];
+    }
+    return out;
+  }
+  function componentBoundaries(paper, total) {
+    var src = COMPONENT_BOUNDARY_SOURCE[String(paper)];
+    return src ? scaleBoundaries(src, total) : null;
+  }
+  // "1.4.2c" → "1", "2.1.3b" → "2"
+  function paperOf(topicCode) {
+    var c = String(topicCode || '').trim().charAt(0);
+    return c === '1' || c === '2' ? c : null;
+  }
   function gradeLabel(g) { return g == null || g === '' ? '–' : (Number(g) === 0 ? 'U' : String(g)); }
   function parseGrade(v) {
     var s = String(v == null ? '' : v).trim().toUpperCase();
@@ -437,7 +479,8 @@ var GcseCore = (function () {
   return {
     normaliseText: normaliseText, stem: stem, editDistance: editDistance, parseRules: parseRules, mark: mark,
     parseTestAnswers: parseTestAnswers, parseTestMap: parseTestMap, splitRow: splitRow,
-    gradeFor: gradeFor, gradeLabel: gradeLabel, parseGrade: parseGrade, suggestDp: suggestDp,
+    gradeFor: gradeFor, gradeLabel: gradeLabel, defaultBoundaries: defaultBoundaries, DEFAULT_BOUNDARY_SOURCE: DEFAULT_BOUNDARY_SOURCE,
+    componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf, parseGrade: parseGrade, suggestDp: suggestDp,
     BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, bankRowFromCells: bankRowFromCells, validateBank: validateBank
   };
 })();
