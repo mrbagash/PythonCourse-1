@@ -2661,8 +2661,7 @@
   function loadLeaderboardNames() {
     var btn = G('bmg3-loadnames'), status = G('bmg3-loadnames-status');
     if (!btn) return;
-    if (typeof requestGoogleStudentToken !== 'function' || typeof fetchAllStudentSheetData !== 'function' ||
-        typeof findGoogleCodeSpreadsheet !== 'function' || typeof googleLookupRowToCandidate !== 'function') {
+    if (typeof requestGoogleStudentToken !== 'function' || typeof fetchStudentNameMap !== 'function') {
       if (status) { status.textContent = 'Name loading is not available here.'; status.style.color = '#7a2a2a'; }
       return;
     }
@@ -2672,25 +2671,10 @@
     (async function () {
       try {
         if (!window.googleStudentAccessToken) await requestGoogleStudentToken();
-        btn.textContent = '⏳ Finding sheet…';
-        var spreadsheetId = sessionStorage.getItem('pylearn_student_sheet_id');
-        if (!spreadsheetId) {
-          var sheet = await findGoogleCodeSpreadsheet();
-          if (!sheet) throw new Error('Could not find the code spreadsheet.');
-          spreadsheetId = sheet.id;
-          sessionStorage.setItem('pylearn_student_sheet_id', spreadsheetId);
-        }
         btn.textContent = '⏳ Reading names…';
-        var sheetData = await fetchAllStudentSheetData(spreadsheetId);
+        var names = await fetchStudentNameMap();
         var imported = 0;
-        sheetData.forEach(function (sheet) {
-          var cols = googleLookupHeaderIndexes(sheet.rows[0] || []);
-          var hasHeader = cols.email != null || cols.name != null || cols.firstName != null || cols.code != null;
-          for (var r = hasHeader ? 1 : 0; r < sheet.rows.length; r++) {
-            var cand = googleLookupRowToCandidate(sheet.rows[r], sheet.title, hasHeader ? cols : null);
-            if (cand && cand.code && cand.displayName) { state.nameMap[cand.code] = cand.displayName; imported++; }
-          }
-        });
+        Object.keys(names).forEach(function (c) { state.nameMap[c] = names[c]; imported++; });
         if (imported) { try { localStorage.setItem('pylearn_name_map', JSON.stringify(state.nameMap)); } catch (_e) {} }
         renderLeaderboard(g._lastLb || []);
         btn.textContent = '✓ ' + imported + ' names';

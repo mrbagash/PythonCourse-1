@@ -9,5 +9,7 @@ window.PYLEARN_CONFIG = {
     "appId": "1:116392131413:web:749085e191446e9e744ddc"
   },
   "googleClientId": "116392131413-3v6js8lrm2fj84tmnp1fog0ubefohf0o.apps.googleusercontent.com",
-  "driveFolderId": "1s6H7gBz7DKWVrY0D41GrlGOZUOK12OX-"
+  "driveFolderId": "1R0Ejsu9WWcJ8C-ul0i4kiwUwShKl2bvo",
+  "quizSubmissionsFolderId": "1XokLPoYqitWj_tVUzx_VfFKVN-u9l6rQ",
+  "studentLookupUrl": "https://script.google.com/macros/s/AKfycbwB-DEBYozROrbI0MZ0sr_sV2KratDGiQUEYrED_3mrv0ZjVOVlwHzwz3AWjsbj_zzD/exec"
 };

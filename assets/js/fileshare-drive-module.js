@@ -5,7 +5,8 @@
  *
  * ── Permission model ────────────────────────────────────────────────────────
  *
- *   JHNCC Computing/           teacher-only (not shared)
+ *   Course Website/Quiz Submissions/   teacher-only (config.quizSubmissionsFolderId;
+ *                                      falls back to a top-level "JHNCC Computing")
  *     Session XXXX/            all students → reader  (so they can see the gallery)
  *       John Smith/            John → writer           (so he can upload his own work)
  *       Jane Doe/              Jane → writer
@@ -129,8 +130,14 @@
     if (!token) throw new Error('No Drive token — authenticate first.');
     onProgress = onProgress || function () {};
 
-    onProgress('Creating JHNCC Computing folder…');
-    var rootId = await findOrCreateFolder('JHNCC Computing', null, token);
+    // Use the configured "Course Website/Quiz Submissions" folder; fall back to the
+    // legacy top-level "JHNCC Computing" folder only if no ID is configured.
+    var cfg = (window.state && window.state.config) || {};
+    var rootId = cfg.quizSubmissionsFolderId ? String(cfg.quizSubmissionsFolderId).trim() : '';
+    if (!rootId) {
+      onProgress('Creating JHNCC Computing folder…');
+      rootId = await findOrCreateFolder('JHNCC Computing', null, token);
+    }
 
     onProgress('Creating session folder…');
     var sessionId = await findOrCreateFolder('Session ' + lobbyCode, rootId, token);

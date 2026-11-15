@@ -31,14 +31,92 @@ var GOOGLE_STUDENT_SHEET_NAME = 'Classroom Student Codes';
 var googleStudentTokenClient = null;
 var googleStudentAccessToken = null;
 
+// URL of the private lookup web app (apps-script/student-lookup.gs).
+// When set, students never read the code sheet directly — it can stay private.
+// When empty, the legacy behaviour (student reads the shared sheet) is used.
+function studentLookupUrl() {
+  var url = state.config && state.config.studentLookupUrl;
+  return url ? String(url).trim() : '';
+}
+
 function getGoogleStudentScopes() {
-  return [
+  var scopes = [
     'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/userinfo.profile',
     'https://www.googleapis.com/auth/drive.file',     // upload own quiz submissions
-    'https://www.googleapis.com/auth/drive.readonly', // view classmates' submissions (gallery)
-    'https://www.googleapis.com/auth/spreadsheets.readonly'
-  ].join(' ');
+    'https://www.googleapis.com/auth/drive.readonly'  // view classmates' submissions (gallery)
+  ];
+  if (!studentLookupUrl()) scopes.push('https://www.googleapis.com/auth/spreadsheets.readonly');
+  return scopes.join(' ');
+}
+
+var STUDENT_LOOKUP_ERRORS = {
+  invalid_token: 'Your Google sign-in has expired. Please log in with Google again.',
+  wrong_app: 'Google sign-in could not be verified. Please try again.',
+  wrong_domain: 'Please sign in with your school Google account.',
+  email_not_verified: 'Please sign in with your school Google account.',
+  no_email: 'Google did not share your email address. Please try again.',
+  missing_token: 'Google sign-in failed. Please try again.',
+  sheet_not_found: 'The class code sheet could not be found. Please tell your teacher.'
+};
+
+// Calls the lookup web app with the student's Google token.
+// Retries busy/network failures (Apps Script allows ~30 runs at the same moment).
+async function callStudentLookup(action) {
+  var url = studentLookupUrl();
+  if (!url) throw new Error('Student lookup is not configured.');
+  if (!googleStudentAccessToken) throw new Error('Google access token is missing.');
+  var lastErr = null;
+  for (var attempt = 0; attempt < 4; attempt++) {
+    if (attempt) {
+      await new Promise(function(r) { setTimeout(r, 700 * attempt + Math.random() * 800); });
+    }
+    try {
+      // text/plain keeps this a "simple" request, so no CORS preflight is needed.
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: action, token: googleStudentAccessToken })
+      });
+      if (!resp.ok) throw new Error('The login service is busy (' + resp.status + '). Please try again.');
+      var body = await resp.json();
+      if (body && (body.ok || body.error === 'not_found')) return body;
+      var known = body && STUDENT_LOOKUP_ERRORS[body.error];
+      if (known) { lastErr = new Error(known); break; } // permanent – don't retry
+      throw new Error('The login service is busy. Please try again.');
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('The login service could not be reached.');
+}
+
+// Returns { code: displayName } for leaderboard "Load names" buttons.
+// Names stay in the browser (state.nameMap / localStorage) — never Firebase.
+async function fetchStudentNameMap() {
+  if (studentLookupUrl()) {
+    var res = await callStudentLookup('names');
+    if (!res.ok) throw new Error('Your Google account was not found in the class list.');
+    return res.names || {};
+  }
+  var spreadsheetId = sessionStorage.getItem('pylearn_student_sheet_id');
+  if (!spreadsheetId) {
+    var sheet = await findGoogleCodeSpreadsheet();
+    if (!sheet) throw new Error('Could not find the code spreadsheet.');
+    spreadsheetId = sheet.id;
+    sessionStorage.setItem('pylearn_student_sheet_id', spreadsheetId);
+  }
+  var sheetData = await fetchAllStudentSheetData(spreadsheetId);
+  var map = {};
+  sheetData.forEach(function(s) {
+    var cols = googleLookupHeaderIndexes(s.rows[0] || []);
+    var hasHeader = cols.email != null || cols.name != null || cols.firstName != null || cols.code != null;
+    for (var r = hasHeader ? 1 : 0; r < s.rows.length; r++) {
+      var cand = googleLookupRowToCandidate(s.rows[r], s.title, hasHeader ? cols : null);
+      if (cand && cand.code && cand.displayName) map[cand.code] = cand.displayName;
+    }
+  });
+  return map;
 }
 
 function requestGoogleStudentToken() {
@@ -393,6 +471,21 @@ async function signInGoogleStudent() {
     // Token acquired — hide login modal, show blocking spinner
     if (loginModal) loginModal.classList.add('hidden');
     showLoggingInModal('Finding your code…');
+
+    // Private sheet: ask the lookup web app for this student's own row only.
+    if (studentLookupUrl()) {
+      var found = await callStudentLookup('me');
+      if (found.email && window.drivePreloadStudentToken) {
+        window.drivePreloadStudentToken(googleStudentAccessToken, found.email);
+      }
+      if (!found.ok || !found.code) {
+        throw new Error('No login code was found for ' + (found.email || 'your account') +
+          '. Please use your normal code or ask your teacher.');
+      }
+      await completeStudentCodeLogin(found.firstName || 'Student', found.lastName || '', found.code, found.className);
+      hideLoggingInModal();
+      return;
+    }
 
     // Email and sheet data are independent — fetch both in parallel.
     // On a cached session the Drive lookup is skipped so both requests fire simultaneously.

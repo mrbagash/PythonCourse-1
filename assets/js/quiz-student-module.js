@@ -4315,36 +4315,16 @@ document.getElementById('btn-qs-load-names').onclick = async function() {
       await requestGoogleStudentToken();
     }
 
-    btn.textContent = '⏳ Finding sheet…';
-
-    // Reuse the cached spreadsheet ID from login (sessionStorage) if available
-    var spreadsheetId = sessionStorage.getItem('pylearn_student_sheet_id');
-    if (!spreadsheetId) {
-      var sheet = await findGoogleCodeSpreadsheet();
-      if (!sheet) throw new Error('Could not find the code spreadsheet in Drive.');
-      spreadsheetId = sheet.id;
-      sessionStorage.setItem('pylearn_student_sheet_id', spreadsheetId);
-    }
-
     btn.textContent = '⏳ Reading names…';
 
-    // Single API call returns all sheet tabs with all cell values
-    var sheetData = await fetchAllStudentSheetData(spreadsheetId);
+    // auth-module.js: uses the private lookup service when configured,
+    // otherwise reads the shared code sheet.
+    var names = await fetchStudentNameMap();
 
     var imported = 0;
-    sheetData.forEach(function(sheet) {
-      var cols      = googleLookupHeaderIndexes(sheet.rows[0] || []);
-      var hasHeader = cols.email != null || cols.name != null ||
-                      cols.firstName != null || cols.code != null;
-      for (var r = hasHeader ? 1 : 0; r < sheet.rows.length; r++) {
-        var candidate = googleLookupRowToCandidate(
-          sheet.rows[r], sheet.title, hasHeader ? cols : null
-        );
-        if (candidate && candidate.code && candidate.displayName) {
-          state.nameMap[candidate.code] = candidate.displayName;
-          imported++;
-        }
-      }
+    Object.keys(names).forEach(function(c) {
+      state.nameMap[c] = names[c];
+      imported++;
     });
 
     // Persist locally — no Firebase write
