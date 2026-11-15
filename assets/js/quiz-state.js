@@ -947,7 +947,9 @@ function populateAssessmentSelect(selectId) {
   if (!select) return;
   var current = select.value;
   select.innerHTML = Object.keys(ASSESSMENTS).filter(function(id) {
-    return !(ASSESSMENTS[id] && (ASSESSMENTS[id].hidden || ASSESSMENTS[id].legacyOf));
+    var a = ASSESSMENTS[id];
+    if (a && a.type === 'gcse' && a.className && assessment.className && a.className !== assessment.className) return false;
+    return !(a && (a.hidden || a.legacyOf));
   }).map(function(id) {
     return '<option value="' + escapeHtml(id) + '">' + escapeHtml(ASSESSMENTS[id].title || id) + '</option>';
   }).join('');
@@ -957,6 +959,10 @@ function populateAssessmentSelect(selectId) {
 function openAssessmentSetup(className) {
   assessment.className = className;
   populateAssessmentSelect('ap-assessment-select');
+  // Online GCSE tests are made in the GCSE tab – load them, then refresh the list.
+  if (typeof gcseRegisterOnlineTests === 'function') {
+    gcseRegisterOnlineTests().then(function() { populateAssessmentSelect('ap-assessment-select'); }).catch(function() {});
+  }
   document.getElementById('ap-setup-class').textContent = className;
   document.getElementById('ap-force-class').checked = false;
   document.getElementById('modal-ap-setup').classList.remove('hidden');

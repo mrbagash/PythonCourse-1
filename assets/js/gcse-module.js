@@ -105,6 +105,7 @@ async function gcseLoadPaperTestsForClass(className) {
     await Promise.all(ids.map(async function (id) {
       var t = tests[id];
       gcseRegisterAssessment(id, t);
+      if (t.mode === 'online') { try { await gcseSyncOnlineResults(id); } catch (e) {} }
       var res = await gcseLoadResults(id);
       out.results[id] = {};
       Object.keys(res).forEach(function (code) {
@@ -119,8 +120,117 @@ async function gcseLoadPaperTestsForClass(className) {
   } catch (e) { /* rules not published yet, or no access – AP Results still works */ }
   return out;
 }
+// What students receive for an online test: questions only – no answers, mark schemes or rules.
+function gcseOnlineSpec(id, t) {
+  return {
+    id: id, title: t.title, type: 'gcse', className: t.className, hideResults: true, timeLimit: t.timeLimit || null,
+    brief: 'Answer every question. Your answers save automatically. Your teacher marks this test and releases your results.',
+    maxScore: gcseTestTotal(t),
+    criteria: (t.questions || []).map(function (q) { return { id: q.id, text: q.id + ' – ' + ((J277.get((q.topics || [])[0]) || {}).title || ''), marks: q.marks }; }),
+    questions: (t.questions || []).map(function (q) {
+      return {
+        id: q.id, title: (J277.get((q.topics || [])[0]) || {}).title || 'GCSE', marks: q.marks,
+        prompt: gEsc(q.text || '') + ' <span class="text-xs text-yellow-300">[' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + ']</span>',
+        type: q.type === 'mcq' ? 'mcq' : (q.type === 'long' ? 'gcse_long' : 'gcse_text'), options: q.type === 'mcq' ? (q.options || []) : null
+      };
+    })
+  };
+}
+async function gcseRegisterOnlineTests() {
+  var tests = await gcseLoadTests();
+  Object.keys(tests).forEach(function (id) { if (tests[id] && tests[id].mode === 'online') ASSESSMENTS[id] = gcseOnlineSpec(id, tests[id]); });
+}
+// { code: true } for students with 25% extra time in this class (Class page → access arrangements).
+async function gcseExtraTimeFor(className) {
+  try {
+    var s = await classSettings(className, true);
+    var out = {};
+    Object.keys(s.access || {}).forEach(function (c) { if (s.access[c] && s.access[c].extraTime) out[c] = true; });
+    return Object.keys(out).length ? out : null;
+  } catch (e) { return null; }
+}
+
+// ── Online tests: collect submissions → auto-mark → staff-only results (teacher checks later) ──
+// Per question: marks (current), auto (computer's mark), status, responses, codes, reasons.
+// Status: 'auto' (blue) · 'needs' (orange) · 'unmarked' (grey) · 'checked' (green) · 'changed' (purple)
+function gcseAutoMarkQuestion(q, answer) {
+  var text = String(answer == null ? '' : answer);
+  if (!text.trim()) return { mark: null, status: 'auto', reason: 'Not attempted', codes: ['E4'] };
+  if (q.type === 'mcq') {
+    var right = String(Number(text)) === String(q.answerIndex);
+    var res = { marks: right ? q.marks : 0, max: q.marks };
+    return { mark: res.marks, status: 'auto', reason: right ? 'Correct option' : 'Wrong option', codes: right ? [] : GcseCore.suggestFeedbackCodes({ type: 'mcq', topics: q.topics, codes: q.codes }, text, res, J277) };
+  }
+  if (q.type === 'short' && q.rules) {
+    var m = GcseCore.mark(q.rules, text, q.marks);
+    return { mark: m.marks, status: m.needsCheck ? 'needs' : 'auto', reason: m.points.map(function (p) { return (p.awarded ? '✓ ' : '✗ ') + p.reason; }).join(' · '),
+      codes: GcseCore.suggestFeedbackCodes({ type: 'short', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, text, m, J277) };
+  }
+  if (q.markScheme) {
+    var sug = GcseCore.suggestLongMark(q.markScheme, text, q.marks);
+    return { mark: sug.marks, status: 'needs', reason: 'Suggested from the mark scheme' + (sug.matched.length ? ': mentions ' + sug.matched.map(function (i) { return '"' + sug.lines[i] + '"'; }).join(', ') : ' – nothing matched'),
+      codes: GcseCore.suggestFeedbackCodes({ type: 'long', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, text, { marks: sug.marks, max: q.marks, points: [] }, J277) };
+  }
+  return { mark: null, status: 'unmarked', reason: 'Needs marking', codes: [] };
+}
+function gcseResultFromQuestions(t, rec) {
+  var score = 0, notAttempted = 0;
+  (t.questions || []).forEach(function (q) { var v = rec.marks[q.id]; if (v == null) notAttempted++; else score += Number(v) || 0; });
+  rec.score = score; rec.maxScore = gcseTestTotal(t); rec.notAttempted = notAttempted;
+  rec.grade = GcseCore.gradeFor(score, gcseBoundaries(t));
+  return rec;
+}
+async function gcseSyncOnlineResults(testId) {
+  var t = gcse.tests[testId];
+  if (!t || t.mode !== 'online') return 0;
+  // Always read the latest list – Force AP adds sessions after the page has loaded.
+  var ss = await state.db.ref('gcse/tests/' + testId + '/sessions').get();
+  var sessions = ss.exists() ? Object.keys(ss.val() || {}) : [];
+  t.sessions = ss.exists() ? ss.val() : null;
+  if (!sessions.length) return 0;
+  var existing = await gcseLoadResults(testId);
+  var updates = {}, n = 0;
+  for (var i = 0; i < sessions.length; i++) {
+    var snap = await state.db.ref('quizSessions/' + sessions[i] + '/answers/0').get();
+    var all = snap.exists() ? (snap.val() || {}) : {};
+    Object.keys(all).forEach(function (code) {
+      var resp = all[code];
+      if (!resp || !resp.completed) return;
+      var prev = existing[code];
+      if (prev && prev.submittedAt && prev.submittedAt >= (resp.completedAt || 0)) return; // already collected
+      var answers = resp.answers || {};
+      var rec = { online: true, absent: false, className: t.className, submittedAt: resp.completedAt || Date.now(), importedAt: resp.completedAt || Date.now(),
+        marks: {}, auto: {}, status: {}, responses: {}, reasons: {}, codes: {}, tabLeaves: Object.keys(resp.tabLeaves || {}).length, session: sessions[i],
+        dp: prev && prev.dp != null ? prev.dp : null };
+      (t.questions || []).forEach(function (q) {
+        var a = answers[q.id];
+        var prevStatus = prev && prev.status && prev.status[q.id];
+        var am = gcseAutoMarkQuestion(q, a);
+        rec.responses[q.id] = a == null ? '' : String(a);
+        rec.auto[q.id] = am.mark;
+        rec.reasons[q.id] = am.reason;
+        if (am.codes.length) rec.codes[q.id] = am.codes;
+        if (prevStatus === 'checked' || prevStatus === 'changed') {      // keep the teacher's decision
+          rec.marks[q.id] = prev.marks ? prev.marks[q.id] : am.mark;
+          rec.status[q.id] = prevStatus;
+          if (prev.codes && prev.codes[q.id]) rec.codes[q.id] = prev.codes[q.id];
+        } else {
+          rec.marks[q.id] = am.mark;
+          rec.status[q.id] = am.status;
+        }
+      });
+      gcseResultFromQuestions(t, rec);
+      updates['gcse/results/' + testId + '/' + code] = rec;
+      n++;
+    });
+  }
+  if (n) await state.db.ref().update(updates);
+  return n;
+}
+
 function gcseRegisterAssessment(id, t) {
   if (typeof ASSESSMENTS === 'undefined' || !t) return;
+  if (t.mode === 'online') { ASSESSMENTS[id] = gcseOnlineSpec(id, t); return; }
   ASSESSMENTS[id] = {
     id: id, title: t.title, type: 'paper', hidden: true, maxScore: gcseTestTotal(t),
     criteria: (t.questions || []).map(function (q) { return { id: q.id, text: q.id + ' (' + (q.topics || []).join(', ') + ')', marks: q.marks }; })
@@ -529,7 +639,8 @@ async function gcseRenderTestList(box, seq) {
 async function gcseRenderTestView(box, seq) {
   var t = gcse.tests[gcse.testId];
   box.innerHTML = '<p class="text-gray-400 text-sm">Loading results…</p>';
-  var fbInfo = null;
+  var fbInfo = null, collected = 0;
+  if (t.mode === 'online') { try { collected = await gcseSyncOnlineResults(gcse.testId); } catch (e) {} }
   try {
     var data = await Promise.all([gcseLoadResults(gcse.testId), gcseLoadTargets(), gcseLoadClassCodes(gcse.className),
       state.db.ref('classes/' + gcse.className + '/apFeedback/' + gcse.testId).get().then(function (s) { return s.exists() ? s.val() : null; }).catch(function () { return null; })]);
@@ -539,6 +650,7 @@ async function gcseRenderTestView(box, seq) {
   var rows = gcseStudentRows(t, gcse.results, gcse.targets, gcse.codes);
   var hasResults = rows.some(function (r) { return !r.missing; });
   var tab = hasResults ? (gcse.viewTab || 'grades') : 'marks';
+  if (collected) gcseStatus('Collected ' + collected + ' new submission' + (collected === 1 ? '' : 's') + ' – auto-marked; check them in Mark answers.');
   var tabBtn = function (k, label) {
     var on = tab === k;
     return '<button type="button" class="gcse-vtab px-3 py-1.5 text-sm font-semibold border-b-2 ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)]' : 'border-transparent text-gray-500 hover:text-gray-800') + '" data-tab="' + k + '">' + label + '</button>';
@@ -1156,9 +1268,14 @@ async function gcseRelease(t, rows) {
   };
   var updates = {};
   updates['classes/' + t.className + '/apFeedback/' + gcse.testId] = feedback;
+  var releasedAt = Date.now();
   rows.forEach(function (r) {
     if (r.missing || r.absent) return;
-    updates['progress/' + r.code + '/assessments/' + gcse.testId + '/grade'] = t.showGrades && r.grade != null ? r.grade : null;
+    var res = gcse.results[r.code] || {};
+    updates['progress/' + r.code + '/assessments/' + gcse.testId] = {
+      type: 'paper', title: t.title, completedAt: res.submittedAt || res.importedAt || releasedAt, score: r.score, maxScore: r.max,
+      className: t.className, rubric: gcseRubric(t, { marks: r.marks }), grade: t.showGrades && r.grade != null ? r.grade : null, releasedAt: releasedAt
+    };
   });
   try {
     await state.db.ref().update(updates);
@@ -1698,6 +1815,7 @@ function gcseRenderBuilder() {
       return '<label class="text-sm"><input type="checkbox" class="gcse-b-type" data-k="' + t.k + '"' + (b.types[t.k] ? ' checked' : '') + '> ' + t.label + '</label>';
     }).join('') + '</div></div>' +
     '<label class="text-sm font-semibold">Total marks<input id="gcse-b-marks" type="number" min="5" max="200" value="' + b.marks + '" class="block w-24 border border-gray-300 rounded px-2 py-1 text-sm font-normal"></label>' +
+    (b.mode === 'online' ? '<label class="text-sm font-semibold">Time limit (min)<input id="gcse-b-time" type="number" min="0" max="240" value="' + (b.timeLimit != null ? b.timeLimit : Math.round(b.marks * 1.1)) + '" class="block w-24 border border-gray-300 rounded px-2 py-1 text-sm font-normal" title="0 = no limit. Students with extra time get 25% more."></label>' : '') +
     '<label class="text-sm font-semibold">Difficulty<select id="gcse-b-difficulty" class="block border border-gray-300 rounded px-2 py-1 text-sm font-normal"><option value="">Any</option><option value="F"' + (b.difficulty === 'F' ? ' selected' : '') + '>Foundation-style</option><option value="H"' + (b.difficulty === 'H' ? ' selected' : '') + '>Higher-style</option></select></label></div>' +
     '<label class="text-xs text-gray-600 flex items-center gap-1.5"><input type="checkbox" id="gcse-b-starter"' + (b.includeStarter ? ' checked' : '') + '> Use the built-in J277 exam-style starter questions as well as your past papers</label>' +
     '<div><button type="button" id="gcse-b-generate" class="jhncc-primary px-4 py-1.5 rounded text-sm font-semibold">' + (b.items.length ? 'Regenerate' : 'Generate questions') + '</button> <span id="gcse-b-msg" class="text-xs text-red-600"></span></div>';
@@ -1785,6 +1903,7 @@ function gcseBindBuilder() {
   document.querySelectorAll('input[name="gcse-b-mode"]').forEach(function (r) { r.onchange = function () { b.mode = this.value; if (b.mode === 'online') b.types.paper = false; rerender(); }; });
   document.querySelectorAll('.gcse-b-type').forEach(function (cb) { cb.onchange = function () { b.types[cb.dataset.k] = cb.checked; }; });
   gEl('gcse-b-marks').onchange = function () { b.marks = Number(this.value) || b.marks; };
+  if (gEl('gcse-b-time')) gEl('gcse-b-time').onchange = function () { b.timeLimit = Math.max(0, Number(this.value) || 0); };
   gEl('gcse-b-difficulty').onchange = function () { b.difficulty = this.value; };
   gEl('gcse-b-starter').onchange = function () { b.includeStarter = this.checked; };
   gEl('gcse-b-generate').onclick = gcseBuilderGenerate;
@@ -1829,6 +1948,7 @@ function gcseBuilderToTest() {
   return {
     title: (b.title || gcseBuilderDefaultTitle()).trim(), className: gcse.className, createdAt: Date.now(), kind: b.kind, unit: b.unit || null,
     paper: b.kind === 'mock' ? (b.paper || 'both') : null, mode: b.mode, paperTotal: total, showGrades: false,
+    timeLimit: b.mode === 'online' ? (b.timeLimit != null ? b.timeLimit : Math.round(b.marks * 1.1)) || null : null,
     boundaries: GcseCore.defaultBoundaries(total),
     questions: b.items.map(function (it, i) {
       return { id: 'Q' + (i + 1), marks: Number(it.marks) || 1, topics: it.topics, command: it.command, bankId: it.bankId, type: it.type, text: it.text,

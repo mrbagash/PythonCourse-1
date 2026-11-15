@@ -936,6 +936,15 @@ function showAssessmentCompleted(record) {
   var _toggleBtn = document.getElementById('btn-ap-toggle-instructions');
   if (_toggleBtn) _toggleBtn.classList.add('hidden');
   document.getElementById('btn-ap-student-exit').classList.toggle('hidden', !!assessment.forced);
+  if (record.gcsePending || spec.type === 'gcse' || record.type === 'gcse-online') {
+    // GCSE tests: no marks until the teacher has checked them and released feedback.
+    document.getElementById('aps-final-score').textContent = 'Submitted ✓';
+    var gcseRubricBox = document.getElementById('aps-final-rubric');
+    if (gcseRubricBox) gcseRubricBox.innerHTML = '<p class="text-gray-600">Your teacher will check your answers. You will see your results under <b>AP Feedback</b> when they are released.</p>';
+    var gcsePdfBtn = document.getElementById('btn-ap-download-score-pdf');
+    if (gcsePdfBtn) gcsePdfBtn.classList.add('hidden');
+    return;
+  }
   document.getElementById('aps-final-score').textContent = (assessment.debugMode ? 'Debug score: ' : 'Score: ') + (record.score || 0) + ' / ' + maxScore;
   renderAssessmentFeedback({ score: record.score || 0, maxScore: maxScore, criteria: record.rubric || [] }, true);
   var rubricBox = document.getElementById('aps-final-rubric');

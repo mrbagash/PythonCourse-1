@@ -3674,6 +3674,7 @@ async function loadForceApTab() {
   }
 
   // Populate assessment dropdown – only APs for this class's year group (unless "Show all").
+  if (typeof gcseRegisterOnlineTests === 'function') { try { await gcseRegisterOnlineTests(); } catch(e) {} }
   var showAllEl = document.getElementById('force-ap-show-all');
   function fillAssessments() {
     var ids = forceApAssessmentIdsForClass(classEl.value, showAllEl && showAllEl.checked);
@@ -3712,6 +3713,7 @@ function forceApAssessmentIdsForClass(className, showAll) {
   return Object.keys(ASSESSMENTS).filter(function(id) {
     var a = ASSESSMENTS[id] || {};
     if (a.legacyOf || a.hidden || a.type === 'paper') return false;
+    if (a.type === 'gcse') return !a.className || a.className === className;
     if (showAll || year == null) return true;
     var m = (id + ' ' + (a.title || '')).match(/year\s*-?(\d{1,2})/i);
     return !m || Number(m[1]) === year;
@@ -3784,6 +3786,13 @@ async function assignForcedApToStudent(className, studentCode, assessmentId) {
     createdAt: now,
     answers: { 0: {} }
   };
+  var apSpec = typeof ASSESSMENTS !== 'undefined' ? ASSESSMENTS[assessmentId] : null;
+  if (apSpec && apSpec.type === 'gcse') {
+    updates['quizSessions/' + lobbyCode].gcseSpec = apSpec;
+    var extra = typeof gcseExtraTimeFor === 'function' ? await gcseExtraTimeFor(className) : null;
+    if (extra) updates['quizSessions/' + lobbyCode].extraTime = extra;
+    updates['gcse/tests/' + assessmentId + '/sessions/' + lobbyCode] = true;
+  }
   updates['classes/' + className + '/forcedAPAssignments/' + studentCode] = {
     assessmentId: assessmentId,
     lobbyCode: lobbyCode,

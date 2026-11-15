@@ -275,6 +275,22 @@ var GcseCore = (function () {
     return result;
   }
 
+  // Long answers are teacher-marked; this only SUGGESTS a mark: a mark-scheme line counts as
+  // "mentioned" when most of its key words (4+ letters) appear in the answer.
+  var SCHEME_STOP = ['that', 'this', 'with', 'from', 'they', 'them', 'have', 'will', 'into', 'than', 'then', 'their', 'there', 'which', 'what', 'when', 'where', 'more', 'less', 'each', 'also', 'only', 'must', 'used', 'uses', 'item', 'items'];
+  function suggestLongMark(markScheme, answer, marks) {
+    var lines = String(markScheme || '').split(/\n|;/).map(function (l) { return l.trim(); }).filter(Boolean);
+    var ans = tokens(normaliseText(answer)).map(stem);
+    var matched = [];
+    lines.forEach(function (line, i) {
+      var words = tokens(normaliseText(line)).filter(function (w) { return w.length >= 4 && SCHEME_STOP.indexOf(w) === -1; }).map(stem);
+      if (!words.length) return;
+      var hits = words.filter(function (w) { return ans.some(function (a) { return a === w || (w.length >= 6 && editDistance(a, w) <= 1); }); }).length;
+      if (hits >= Math.min(2, words.length) && hits / words.length >= 0.5) matched.push(i);
+    });
+    return { marks: Math.min(matched.length, marks || matched.length), matched: matched, lines: lines };
+  }
+
   // Suggest feedback codes (J277.FEEDBACK_CODES) for a marked answer.
   //   q: { type, command, topics, codes, marks }  result: from mark() (or { marks, max } for MCQ)
   // Firebase can hand lists back as objects ({0:..,1:..}) – accept either.
@@ -528,7 +544,7 @@ var GcseCore = (function () {
     parseTestAnswers: parseTestAnswers, parseTestMap: parseTestMap, splitRow: splitRow,
     gradeFor: gradeFor, gradeLabel: gradeLabel, defaultBoundaries: defaultBoundaries, DEFAULT_BOUNDARY_SOURCE: DEFAULT_BOUNDARY_SOURCE,
     componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf,
-    suggestFeedbackCodes: suggestFeedbackCodes, normaliseDifficulty: normaliseDifficulty, asList: asList, parseGrade: parseGrade, suggestDp: suggestDp,
+    suggestFeedbackCodes: suggestFeedbackCodes, normaliseDifficulty: normaliseDifficulty, asList: asList, suggestLongMark: suggestLongMark, parseGrade: parseGrade, suggestDp: suggestDp,
     BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, bankRowFromCells: bankRowFromCells, validateBank: validateBank
   };
 })();

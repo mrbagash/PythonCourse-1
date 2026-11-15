@@ -251,8 +251,11 @@ document.getElementById('btn-ap-start-host').onclick = async function() {
     assessmentId: id,
     className: assessment.className,
     forced: !!forceClass,
-    questions: spec.questions || []
+    questions: spec.questions || [],
+    gcseSpec: spec.type === 'gcse' ? spec : null,
+    extraTime: spec.type === 'gcse' && typeof gcseExtraTimeFor === 'function' ? await gcseExtraTimeFor(assessment.className) : null
   });
+  if (spec.type === 'gcse') state.db.ref('gcse/tests/' + id + '/sessions/' + code).set(true).catch(function() {});
   // Write to lightweight active-sessions index so admin panel can find it without scanning all sessions
   state.db.ref('activeSessions/' + code).set({ className: assessment.className, lessonId: 'AP:' + id, startedAt: Date.now() }).catch(function(){});
   if (forceClass) {
@@ -690,7 +693,9 @@ async function _joinAssessmentByCode(code, opts) {
 }
 
 function showAssessmentStudentScreen(session) {
+  if (session && session.gcseSpec && !ASSESSMENTS[assessment.assessmentId]) ASSESSMENTS[assessment.assessmentId] = session.gcseSpec;
   var spec = ASSESSMENTS[session.assessmentId] || ASSESSMENTS[assessment.assessmentId];
+  assessment.gcseExtraTime = !!(session && session.extraTime && state.uid && session.extraTime[state.uid]);
   document.getElementById('ap-student-screen').classList.remove('hidden');
   document.getElementById('aps-active').classList.remove('hidden');
   document.getElementById('aps-finished').classList.add('hidden');
@@ -785,6 +790,10 @@ async function loadAssessmentQuestionPaper(spec) {
   }
   renderAssessmentQuestionPaper(spec);
   document.getElementById('aps-save-status').textContent = assessment.debugMode ? 'Debug mode - not saved' : 'Autosave on';
+  if (spec.type === 'gcse') {
+    document.getElementById('aps-feedback').innerHTML = '<div class="text-xs text-gray-500">Answers save automatically. Your teacher marks this test – you will see your results when they release them.</div>';
+    startGcseTestConditions(spec);
+  }
   initApScratchLetterbox();
 }
 
@@ -890,6 +899,11 @@ function renderAssessmentQuestionPaper(spec) {
     widgetEl.querySelectorAll('input[name="ap-mcq-answer"]').forEach(function(radio) {
       radio.onchange = function() { setQuestionAnswer(spec, q.id, radio.value, { defer: true }); };
     });
+  } else if (q.type === 'gcse_text' || q.type === 'gcse_long') {
+    widgetEl.innerHTML = '<textarea id="ap-output-answer" class="ex-textarea mt-2" rows="' + (q.type === 'gcse_long' ? 8 : 3) + '" autocomplete="off" placeholder="Write your answer">' + escapeHtml(saved || '') + '</textarea>';
+    var gcseInput = document.getElementById('ap-output-answer');
+    gcseInput.oninput = function() { setQuestionAnswer(spec, q.id, gcseInput.value, { defer: true }); };
+    setTimeout(function() { gcseInput.focus(); }, 0);
   } else if (q.type === 'output_text') {
     widgetEl.innerHTML = '<textarea id="ap-output-answer" class="ex-textarea mt-2" rows="4" autocomplete="off" spellcheck="false" placeholder="Type the exact output here">' + escapeHtml(saved || '') + '</textarea>';
     var outputInput = document.getElementById('ap-output-answer');
@@ -939,6 +953,13 @@ async function saveQuestionAssessmentDraft(spec, opts) {
     return;
   }
   if (!assessment.responseRef || assessment.completed) return;
+  if (spec.type === 'gcse') {
+    try {
+      await assessment.responseRef.update({ answers: assessment.questionAnswers || {}, currentQuestionIdx: assessment.questionCurrentIdx || 0, savedAt: Date.now(), lastSeenAt: Date.now() });
+      document.getElementById('aps-save-status').textContent = 'Saved ' + new Date().toLocaleTimeString('en-GB');
+    } catch(e) { document.getElementById('aps-save-status').textContent = 'Save failed'; }
+    return;
+  }
   var result = assessQuestionAssessment(spec, assessment.questionAnswers || {});
   saveLocalApBackup(result);
   try {
@@ -1267,6 +1288,7 @@ async function autoSubmitAssessmentForEarlyEnd() {
 async function submitQuestionAssessmentFinal() {
   var spec = ASSESSMENTS[assessment.assessmentId];
   saveCurrentQuestionAnswer(spec, { silent: true });
+  if (spec && spec.type === 'gcse') return submitGcseTestFinal(spec);
   if (!assessment.debugMode && assessment.responseRef) {
     assessment.responseRef.update({ finalSubmitInProgress: true, lastSeenAt: Date.now() }).catch(function() {});
   }
@@ -1315,6 +1337,62 @@ async function submitQuestionAssessmentFinal() {
     // Still show completed so they can exit
   }
   showAssessmentCompleted({ score: result.score, maxScore: result.maxScore, rubric: result.criteria, className: assessment.className || state.className || null });
+}
+
+// GCSE online tests: save answers (never marks) – the teacher's auto-mark + check happens on their side.
+async function submitGcseTestFinal(spec) {
+  assessment.completed = true;
+  if (assessment.gcseTimer) { clearInterval(assessment.gcseTimer); assessment.gcseTimer = null; }
+  if (assessment.debugMode) { showAssessmentCompleted({ gcsePending: true, debugMode: true }); return; }
+  var completedAt = Date.now();
+  try {
+    if (assessment.responseRef) {
+      await assessment.responseRef.update({
+        answers: assessment.questionAnswers || {}, completed: true, completedAt: completedAt,
+        finalSubmitInProgress: false, savedAt: completedAt, lastSeenAt: completedAt
+      });
+    }
+    await saveAssessmentProgressRecord(state.uid, assessment.assessmentId, assessment.lobbyCode, {
+      completedAt: completedAt, className: assessment.className || state.className || null,
+      type: 'gcse-online', title: spec.title, pending: true
+    });
+  } catch(e) {
+    var saveStatusEl = document.getElementById('aps-save-status');
+    if (saveStatusEl) saveStatusEl.textContent = 'Save failed — please tell your teacher';
+  }
+  showAssessmentCompleted({ gcsePending: true, className: assessment.className || state.className || null });
+}
+
+// Timer (with 25% extra time) + tab-leave log for GCSE online tests.
+function startGcseTestConditions(spec) {
+  if (assessment.gcseTimer) { clearInterval(assessment.gcseTimer); assessment.gcseTimer = null; }
+  if (assessment.gcseVisibility) document.removeEventListener('visibilitychange', assessment.gcseVisibility);
+  if (!spec || spec.type !== 'gcse' || assessment.debugMode || !assessment.responseRef) return;
+  assessment.gcseVisibility = function() {
+    if (document.hidden && !assessment.completed && assessment.responseRef) {
+      assessment.responseRef.child('tabLeaves').push(Date.now()).catch(function() {});
+    }
+  };
+  document.addEventListener('visibilitychange', assessment.gcseVisibility);
+  if (!spec.timeLimit) return;
+  var limitMs = spec.timeLimit * 60000 * (assessment.gcseExtraTime ? 1.25 : 1);
+  assessment.responseRef.child('startedAt').get().then(function(snap) {
+    var startedAt = snap.val();
+    if (!startedAt) { startedAt = Date.now(); assessment.responseRef.child('startedAt').set(startedAt).catch(function() {}); }
+    var tick = function() {
+      var left = startedAt + limitMs - Date.now();
+      var el = document.getElementById('aps-save-status');
+      if (left <= 0) {
+        clearInterval(assessment.gcseTimer); assessment.gcseTimer = null;
+        if (!assessment.completed) { saveCurrentQuestionAnswer(spec, { silent: true }); submitGcseTestFinal(spec); }
+        return;
+      }
+      var m = Math.floor(left / 60000), sec = Math.floor((left % 60000) / 1000);
+      if (el) el.textContent = '⏱ ' + m + ':' + (sec < 10 ? '0' : '') + sec + ' left' + (assessment.gcseExtraTime ? ' (includes extra time)' : '');
+    };
+    tick();
+    assessment.gcseTimer = setInterval(tick, 1000);
+  }).catch(function() {});
 }
 
 function waitForAssessmentVm() {
