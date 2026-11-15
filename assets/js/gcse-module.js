@@ -632,7 +632,7 @@ async function gcseRenderTestList(box, seq) {
         '<td class="p-2 text-right"><button type="button" class="gcse-open-test px-3 py-1 rounded border border-gray-300 text-sm font-semibold hover:bg-white" data-id="' + gEsc(id) + '">▸ View</button></td></tr>';
     }).join('') + '</table></div>';
   box.querySelectorAll('.gcse-open-test').forEach(function (b) {
-    b.onclick = function () { gcse.testId = b.dataset.id; gcse.viewTab = 'grades'; gcseRenderTest(); };
+    b.onclick = function () { gcse.testId = b.dataset.id; gcse.viewTab = null; gcseRenderTest(); };
   });
 }
 
@@ -649,7 +649,10 @@ async function gcseRenderTestView(box, seq) {
   } catch (e) { if (box.isConnected) box.innerHTML = '<p class="text-red-600 text-sm">' + gEsc(gDbError(e)) + '</p>'; return; }
   var rows = gcseStudentRows(t, gcse.results, gcse.targets, gcse.codes);
   var hasResults = rows.some(function (r) { return !r.missing; });
-  var tab = hasResults ? (gcse.viewTab || 'grades') : 'marks';
+  var online = t.mode === 'online';
+  var toCheck = online && hasResults && typeof gcseMarkUncheckedSummary === 'function' ? gcseMarkUncheckedSummary(t).mustCheck : 0;
+  var tab = hasResults ? (gcse.viewTab || (toCheck ? 'mark' : 'grades')) : 'marks';
+  if (tab === 'mark' && !(online && hasResults)) tab = 'grades';
   if (collected) gcseStatus('Collected ' + collected + ' new submission' + (collected === 1 ? '' : 's') + ' – auto-marked; check them in Mark answers.');
   var tabBtn = function (k, label) {
     var on = tab === k;
@@ -668,7 +671,7 @@ async function gcseRenderTestView(box, seq) {
   var h = '<div class="flex items-center gap-3 mb-1"><button type="button" id="gcse-back-list" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
     '<h3 class="text-lg font-bold text-gray-800">' + gEsc(t.title) + '</h3><span class="text-xs text-gray-500">' + gcseTestTotal(t) + ' marks · ' + (t.questions || []).length + ' questions</span></div>' +
     '<div class="flex items-center gap-1 border-b border-gray-200 mb-3">' +
-      (hasResults ? tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') : tabBtn('marks', 'Add marks')) +
+      (hasResults ? (online && typeof gcseMarkRender === 'function' ? tabBtn('mark', 'Mark answers' + (toCheck ? ' <span class="ml-1 px-1.5 rounded-full text-[11px] bg-orange-100 text-orange-800">' + toCheck + '</span>' : ' ✓')) : '') + tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') : tabBtn('marks', 'Add marks')) +
       menu + '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div><div id="gcse-tab-body">';
   if (tab === 'marks' && t.mode === 'online') {
     h += '<div class="rounded border border-green-200 bg-green-50 p-4 text-sm text-green-900 mb-3"><b>Online test – ready to run.</b> Start it with the class from <b>Classes → Start AP</b>, or give it to absent students with <b>Force AP</b>. Results appear here as students submit.</div>';
@@ -678,6 +681,8 @@ async function gcseRenderTestView(box, seq) {
       ' Use <b>ABS</b> for absent students and leave a cell <b>blank</b> if a question was not attempted.' +
       '<div class="flex gap-2 mt-3"><button type="button" id="gcse-dl-template" class="jhncc-primary px-3 py-1.5 rounded text-sm font-semibold">Download marks spreadsheet</button>' +
       '<label class="px-3 py-1.5 rounded border border-blue-400 text-blue-700 bg-white text-sm font-semibold cursor-pointer">Upload filled spreadsheet<input type="file" id="gcse-upload" accept=".xlsx,.xls,.csv" class="hidden"></label></div></div>';
+  } else if (tab === 'mark') {
+    h += '<div id="gcse-mark-root"></div>';
   } else if (tab === 'grades') {
     h += gcseGradesTabHtml(t, rows);
   } else if (tab === 'feedback') {
@@ -694,6 +699,7 @@ async function gcseRenderTestView(box, seq) {
   if (gEl('gcse-print-paper')) gEl('gcse-print-paper').onclick = function () { gEl('gcse-more-menu').open = false; gcsePrintPaper(t, false); };
   if (gEl('gcse-print-scheme')) gEl('gcse-print-scheme').onclick = function () { gEl('gcse-more-menu').open = false; gcsePrintPaper(t, true); };
   if (hasResults) gcseBindWcf(t, rows);
+  if (tab === 'mark') gcseMarkRender(t);
 }
 
 function gcseRenderSettings(t) {
@@ -1251,6 +1257,13 @@ function gcseExport(t, rows) {
 }
 
 async function gcseRelease(t, rows) {
+  var unchecked = typeof gcseMarkUncheckedSummary === 'function' ? gcseMarkUncheckedSummary(t) : null;
+  if (unchecked && (unchecked.mustCheck || unchecked.autoOnly)) {
+    var msg = (unchecked.mustCheck ? unchecked.mustCheck + ' answer' + (unchecked.mustCheck === 1 ? '' : 's') + ' still need marking or checking (grey/orange).\n' : '') +
+      (unchecked.autoOnly ? unchecked.autoOnly + ' auto-mark' + (unchecked.autoOnly === 1 ? ' has' : 's have') + ' not been checked (blue).\n' : '') +
+      '\nRelease anyway? Students will see the marks as they are now.';
+    if (!confirm(msg)) { gcseStatus('Release cancelled – finish checking in Mark answers.'); return; }
+  }
   var stats = gcseTopicStats(t, rows);
   var testTopics = {};
   (t.questions || []).forEach(function (q) { (q.topics || []).forEach(function (tc) { testTopics[tc] = true; }); });
