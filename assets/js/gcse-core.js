@@ -81,6 +81,8 @@ var GcseCore = (function () {
   function wordMatches(token, ruleStem) {
     var s = stem(token);
     if (s === ruleStem) return true;
+    // Numbers (denary, binary, hex with digits) must match exactly – 10011101 is not 10011100.
+    if (/\d/.test(ruleStem) || /\d/.test(s)) return false;
     if (ruleStem.length >= 5 && s.length >= 4) {
       var allowed = ruleStem.length >= 8 ? 2 : 1;
       if (Math.abs(s.length - ruleStem.length) <= allowed && editDistance(s, ruleStem) <= allowed) return 'fuzzy';

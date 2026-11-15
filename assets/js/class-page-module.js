@@ -242,6 +242,7 @@ async function classPageRender() {
   var settings = await classSettings(className, true);
   var tabs = [['assessments', 'Assessments'], ['settings', 'Settings']];
   if (typeof classOverviewRender === 'function') tabs.unshift(['overview', 'Overview']);
+  if (typeof hwClassTabRender === 'function' && settings.type === 'gcse') tabs.splice(tabs.length - 1, 0, ['homework', 'Homework']);
   if (!classPage.tab) classPage.tab = settings.type ? tabs[0][0] : 'settings';
   if (!tabs.some(function (t) { return t[0] === classPage.tab; })) classPage.tab = tabs[0][0];
   var tabsEl = document.getElementById('class-page-tabs');
@@ -253,6 +254,7 @@ async function classPageRender() {
   var body = document.getElementById('class-page-body');
   if (classPage.tab === 'overview') return classOverviewRender(body, className, settings);
   if (classPage.tab === 'assessments') return classAssessmentsRender(body, className, settings);
+  if (classPage.tab === 'homework') return hwClassTabRender(body, className, settings);
   return classPageRenderSettings(body, className, settings);
 }
 

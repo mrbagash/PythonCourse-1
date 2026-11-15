@@ -40,10 +40,13 @@ async function classOverviewData(className, settings, year) {
     Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/gcseMisconceptions').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
     isGcse ? state.db.ref('gcse/targets').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }) : Promise.resolve({}),
     Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
-    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/plc').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); }))
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/plc').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/hw').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/mastery').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
+    state.db.ref('classes/' + className + '/homework').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
   ]);
-  var lastSeen = {}, misc = {}, dirt = {}, plc = {};
-  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; dirt[c] = extra[3][i]; plc[c] = extra[4][i]; });
+  var lastSeen = {}, misc = {}, dirt = {}, plc = {}, hwP = {}, mast = {}, homework = extra[7] || {};
+  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; dirt[c] = extra[3][i]; plc[c] = extra[4][i]; hwP[c] = extra[5][i]; mast[c] = extra[6][i]; });
   var targetsAll = extra[2];
   var tests = (typeof gcse !== 'undefined' && gcse.tests) || {};
   // Raw GCSE results (for feedback codes) for this year's official paper tests.
@@ -152,6 +155,12 @@ async function classOverviewData(className, settings, year) {
       });
     });
     s.stuck = stuck;
+    // Homework: overdue and not finished
+    var hwIds = Object.keys(homework);
+    s.hwSet = hwIds.length; s.hwDone = hwIds.filter(function (id) { return hwP[s.code][id] && hwP[s.code][id].doneAt; }).length;
+    var overdueHw = hwIds.filter(function (id) { return homework[id].dueAt < now && !(hwP[s.code][id] && hwP[s.code][id].doneAt); }).length;
+    if (overdueHw) why.push({ k: 'hw', t: overdueHw + ' homework' + (overdueHw === 1 ? '' : 's') + ' not done' });
+    s.needs = typeof hwNeeds === 'function' ? hwNeeds(mast[s.code], hwP[s.code]).needs.map(function (x) { return hwKeyLabel(x.k); }) : [];
     if (stuck.length) why.push({ k: 'stuck', t: 'Still stuck: ' + stuck.slice(0, 2).join('; ') + (stuck.length > 2 ? ' +' + (stuck.length - 2) : '') });
     if (undone) why.push({ k: 'tasks', t: undone + ' feedback task' + (undone === 1 ? '' : 's') + ' not done' });
     s.why = why;
@@ -183,7 +192,8 @@ async function classOverviewData(className, settings, year) {
   var misconceptions = Object.keys(miscCount).map(function (id) { return { id: id, students: miscCount[id], info: J277.feedbackCode ? J277.feedbackCode(id) : null }; })
     .sort(function (a, b) { return b.students.length - a.students.length; });
 
-  return { className: className, isGcse: isGcse, settings: settings, year: year, codes: codes, official: official, excluded: excluded,
+  return { hwData: { codes: codes, progs: codes.reduce(function (o, c) { o[c] = { hw: hwP[c], mastery: mast[c] }; return o; }, {}), homework: homework },
+    className: className, isGcse: isGcse, settings: settings, year: year, codes: codes, official: official, excluded: excluded,
     students: students, areas: areas, covered: covered, misconceptions: misconceptions, yearsData: data };
 }
 
@@ -348,7 +358,7 @@ function classOverviewDraw(body) {
   // Row: trend chart + needs attention
   var attention = S.filter(function (s) { return s.why.length; }).sort(function (a, b) { return b.why.length - a.why.length || a.name.localeCompare(b.name); });
   var filt = classOverview.attnFilter || 'all';
-  var kinds = [['all', 'All'], ['below', 'Below target'], ['dp', 'Low DP'], ['drop', '↓ Dropping'], ['missed', 'Missed'], ['login', 'Not logged in'], ['stuck', 'Still stuck'], ['tasks', 'Tasks not done']].filter(function (k) { return O.isGcse || k[0] !== 'below'; });
+  var kinds = [['all', 'All'], ['below', 'Below target'], ['dp', 'Low DP'], ['drop', '↓ Dropping'], ['missed', 'Missed'], ['login', 'Not logged in'], ['stuck', 'Still stuck'], ['tasks', 'Tasks not done'], ['hw', 'Homework not done']].filter(function (k) { return O.isGcse || k[0] !== 'below'; });
   var attnShown = attention.filter(function (s) { return filt === 'all' || s.why.some(function (w) { return w.k === filt; }); });
   h += '<div class="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4"><div class="lg:col-span-3 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Class average per assessment</h4>' + coTrendChart(O.official) + '</div>' +
     '<div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-1">Needs attention <span class="text-xs font-normal text-gray-500">(' + attention.length + ')</span></h4>' +
@@ -372,7 +382,8 @@ function classOverviewDraw(body) {
           ' <span class="text-xs text-gray-500">– ' + m.students.length + ' student' + (m.students.length === 1 ? '' : 's') + '</span></div><div class="text-[11px] text-gray-500">' + m.students.map(function (s) { return cpEsc(s.name); }).join(', ') + '</div></div>';
       }).join('') : '<p class="text-sm text-gray-500">None recorded yet. They come from feedback codes on marked answers and from quizzes.</p>') + '</div></div>' +
       '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Students × units</h4>' + coHeatmap(O) + '</div>' +
-      coPlcCard(O);
+      coPlcCard(O) +
+      (typeof hwClassNeedsHtml === 'function' && Object.keys(O.hwData.homework).length ? '<div class="border border-gray-200 rounded-lg p-3 mb-4">' + hwClassNeedsHtml(O.hwData) + '</div>' : '');
   }
   // Completion
   h += '<div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Completion</h4>' +
@@ -469,9 +480,10 @@ function reportingPupilRow(O, s) {
     s.grade == null ? '' : coGradeLabel(s.grade) + (s.gradeEst ? ' est.' : ''), s.target == null ? '' : coGradeLabel(s.target), s.gap == null ? '' : s.gap,
     s.papers['1'] ? s.papers['1'].pct : '', s.papers['2'] ? s.papers['2'].pct : '', s.dp == null ? '' : s.dp,
     s.lastSeen ? new Date(s.lastSeen).toLocaleDateString('en-GB') : 'never', s.taskTotal ? s.taskDone + '/' + s.taskTotal : '', (s.stuck || []).join('; '),
-    (s.mismatch || []).filter(function (m) { return m.kind === 'over'; }).map(function (m) { return m.topic; }).join(' '), s.why.map(function (w) { return w.t; }).join('; ')];
+    (s.mismatch || []).filter(function (m) { return m.kind === 'over'; }).map(function (m) { return m.topic; }).join(' '), s.why.map(function (w) { return w.t; }).join('; '),
+    s.hwSet ? s.hwDone + '/' + s.hwSet : '', (s.needs || []).slice(0, 3).join('; ')];
 }
-var REPORT_PUPIL_HEAD = ['Class', 'Name', 'Code', 'Type', 'Average %', 'Trend', 'Done', 'Missed', 'Working grade', 'Target', 'Gap', 'Paper 1 %', 'Paper 2 %', 'Latest DP', 'Last login', 'Feedback tasks done', 'Still stuck', 'Over-confident topics', 'Needs attention'];
+var REPORT_PUPIL_HEAD = ['Class', 'Name', 'Code', 'Type', 'Average %', 'Trend', 'Done', 'Missed', 'Working grade', 'Target', 'Gap', 'Paper 1 %', 'Paper 2 %', 'Latest DP', 'Last login', 'Feedback tasks done', 'Still stuck', 'Over-confident topics', 'Needs attention', 'Homework done', 'Homework needs'];
 async function reportingBuild(names, onProgress) {
   var year = currentAcademicYear();
   var summary = [['Class', 'Type', 'Pupils', 'Official assessments', 'Average %', 'Completion %', 'On or above target %', 'Needs attention', 'Feedback tasks done %']];

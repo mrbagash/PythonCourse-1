@@ -15,13 +15,18 @@
     if (!D || !body) return orig.apply(this, arguments);
     if (gcse.profileCode !== D.code) { gcse.profileCode = D.code; gcse.profileTab = 'overview'; }
     var tab = gcse.profileTab || 'overview';
-    if (tab === 'feedback') body.innerHTML = gpFeedbackTabHtml(D); else orig.apply(this, arguments);
+    if (tab === 'feedback') body.innerHTML = gpFeedbackTabHtml(D);
+    else if (tab === 'homework') body.innerHTML = '<div id="hw-prof"><p class="text-gray-400 text-sm">Loading homework…</p></div>';
+    else orig.apply(this, arguments);
     var nDirt = gpDirtItems(D).length;
-    body.insertAdjacentHTML('afterbegin', '<div class="flex gap-1 border-b border-gray-200 mb-3">' + [['overview', 'Overview'], ['feedback', 'Feedback' + (nDirt ? ' (' + nDirt + ')' : '')]].map(function (t) {
+    var tabList = [['overview', 'Overview'], ['feedback', 'Feedback' + (nDirt ? ' (' + nDirt + ')' : '')]];
+    if (typeof hwProfileRender === 'function' && D.isGcse) tabList.push(['homework', 'Homework']);
+    body.insertAdjacentHTML('afterbegin', '<div class="flex gap-1 border-b border-gray-200 mb-3">' + tabList.map(function (t) {
       var on = t[0] === tab;
       return '<button type="button" class="gp-tab px-3 py-1.5 text-sm font-semibold border-b-2 ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)]' : 'border-transparent text-gray-500') + '" data-tab="' + t[0] + '">' + t[1] + '</button>';
     }).join('') + '</div>');
     body.querySelectorAll('.gp-tab').forEach(function (b) { b.onclick = function () { gcse.profileTab = b.dataset.tab; gcseRenderProfile(); }; });
+    if (tab === 'homework') hwProfileRender(D);
   };
 })();
 function gpDirtItems(D) {
@@ -80,9 +85,12 @@ async function gpOpenMyProgress() {
     state.db.ref('progress/' + state.uid + '/assessments').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
     state.db.ref('classes/' + state.className + '/apFeedback').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
     state.db.ref('gcse/targets/' + state.uid).get().then(function (s) { return s.val(); }).catch(function () { return null; }),
-    state.db.ref('progress/' + state.uid + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
+    state.db.ref('progress/' + state.uid + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('progress/' + state.uid + '/hw').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('progress/' + state.uid + '/mastery').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('classes/' + state.className + '/homework').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
   ]);
-  body.innerHTML = gpMyProgressHtml(data[0], data[1], data[2], data[3]);
+  body.innerHTML = (typeof hwMyProgressHtml === 'function' ? hwMyProgressHtml(data[4], data[5], data[6]) : '') + gpMyProgressHtml(data[0], data[1], data[2], data[3]);
   var tb = gEl('my-progress-tasks'); if (tb) tb.onclick = function () { m.classList.add('hidden'); wcfOpenTasks(); };
   var pb = gEl('my-progress-plc'); if (pb) pb.onclick = function () { m.classList.add('hidden'); plcOpen(); };
 }

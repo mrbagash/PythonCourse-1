@@ -1513,8 +1513,10 @@ function gcseLoadBankCache() {
   return gcse.bank;
 }
 function gcseStarterRows() {
-  return (typeof GCSE_STARTER_BANK !== 'undefined' ? GCSE_STARTER_BANK : []).map(function (r) {
-    return Object.assign({}, r, { topics: r.topics.slice(), options: r.options.slice() });
+  // Built-in starter bank + the extended bank (gcse-bank-x-*.js: every sub-topic, levels 1–5, skills, why-wrong notes).
+  var rows = (typeof GCSE_STARTER_BANK !== 'undefined' ? GCSE_STARTER_BANK : []).concat(typeof GCSE_BANK_X !== 'undefined' ? GCSE_BANK_X.rows : []);
+  return rows.map(function (r) {
+    return Object.assign({}, r, { topics: r.topics.slice(), options: r.options.slice(), why: (r.why || []).slice() });
   });
 }
 // Every bank question (your Drive sheet first; starter questions with the same ID are replaced).
@@ -1713,7 +1715,8 @@ function gcseBuildLiveQuizQuestions(topics, count, opts) {
   opts = opts || {};
   var types = opts.types || (opts.includeShort === false ? ['mcq'] : ['mcq', 'short']);
   // Live quizzes show at most 4 answer buttons.
-  var all = gcseQuestionsForTopics(topics, types, opts.difficulty || '').filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; });
+  // Multi-line (code) questions are left out of live quizzes: the quiz screen shows one line of text.
+  var all = gcseQuestionsForTopics(topics, types, opts.difficulty || '').filter(function (v) { return (v.row.type !== 'mcq' || v.row.options.length <= 4) && String(v.row.question).indexOf('\n') === -1; });
   var pool;
   if (opts.ids) {            // teacher picked the questions: keep their order
     var byId = {}; all.forEach(function (v) { byId[v.row.id] = v; });
@@ -1722,7 +1725,19 @@ function gcseBuildLiveQuizQuestions(topics, count, opts) {
     var avoid = opts.avoid || {};
     var fresh = all.filter(function (v) { return !avoid[v.row.id]; });
     if (fresh.length < count) fresh = fresh.concat(all.filter(function (v) { return avoid[v.row.id]; }));
-    pool = fresh.slice().sort(function () { return Math.random() - 0.5; }).slice(0, count);
+    var shuffled = fresh.slice().sort(function () { return Math.random() - 0.5; });
+    pool = shuffled.slice(0, count);
+    // Keep a mix: when written answers are allowed and available, at least a quarter of the quiz is written.
+    if (types.indexOf('short') !== -1 && types.indexOf('mcq') !== -1) {
+      var want = Math.min(Math.ceil(count / 4), shuffled.filter(function (v) { return v.row.type === 'short'; }).length);
+      var have = pool.filter(function (v) { return v.row.type === 'short'; }).length;
+      if (have < want) {
+        var extra = shuffled.filter(function (v) { return v.row.type === 'short' && pool.indexOf(v) === -1; }).slice(0, want - have);
+        var keep = pool.filter(function (v) { return v.row.type === 'short'; });
+        var mcqs = pool.filter(function (v) { return v.row.type !== 'short'; }).slice(0, count - keep.length - extra.length);
+        pool = keep.concat(extra, mcqs).sort(function () { return Math.random() - 0.5; });
+      }
+    }
   }
   return pool.map(function (v) {
     var r = v.row;
@@ -2315,13 +2330,13 @@ async function gcseLoadProfileData(code) {
   history.sort(function (x, y) { return x.at - y.at; });
   var steps = 0, ms = 0;
   Object.keys(prog).forEach(function (k) {
-    if (['assessments', 'gcseQuiz', 'gcseReview', 'gcseMisconceptions', 'forcedAPAssignment', 'plc', 'dirt'].indexOf(k) !== -1) return;
+    if (['assessments', 'gcseQuiz', 'gcseReview', 'gcseMisconceptions', 'forcedAPAssignment', 'plc', 'dirt', 'mastery', 'hw'].indexOf(k) !== -1) return;
     var lesson = prog[k]; if (!lesson || typeof lesson !== 'object') return;
     Object.keys(lesson).forEach(function (st) { var x = lesson[st]; if (x && x.completed) steps++; if (x && x.totalMs) ms += x.totalMs; });
   });
   var covered = Object.keys(settings.covered || {}).map(gFromTopicKey);
   return { code: code, className: className, isGcse: isGcse, settings: settings, target: target, access: access, history: history, quiz: prog.gcseQuiz || {},
-    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, dirt: prog.dirt || {}, steps: steps, ms: ms, covered: covered };
+    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, dirt: prog.dirt || {}, mastery: prog.mastery || {}, hw: prog.hw || {}, steps: steps, ms: ms, covered: covered };
 }
 
 // Topic scores from official assessments, plus (optionally) live quizzes / practice.

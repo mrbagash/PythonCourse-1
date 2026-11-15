@@ -242,6 +242,30 @@ var J277 = (function () {
     { id: 'T1', topics: ['2.3.2c'], text: 'Syntax error = breaks the language rules (won\'t run); logic error = runs but wrong result' },
     { id: 'T2', topics: ['2.3.2d'], text: 'Boundary data is at the edge of the valid range; erroneous data should be rejected' },
     { id: 'L1', topics: ['2.5.1c'], text: 'Compiler translates the whole program at once; interpreter translates line by line', subjects: ['compiler', 'interpreter'], wrong: ['line', 'program', 'code'] },
+    // Finer programming / data mix-ups (skill level)
+    { id: 'I1', topics: ['2.2.1d'], skill: 'for', text: 'A for loop is count-controlled: it repeats a set number of times. In ERL "for i = 1 to 5" runs 5 times; in Python range(1, 5) stops BEFORE 5' },
+    { id: 'I2', topics: ['2.2.1d'], skill: 'while', text: 'A while loop is condition-controlled: it repeats WHILE the condition is true, and something inside must change it or it never stops' },
+    { id: 'I3', topics: ['2.2.1d'], skill: 'choose', text: 'Use a for loop when you know how many times to repeat; use a while (or do-until) loop when it depends on a condition' },
+    { id: 'I4', topics: ['2.2.1d'], skill: 'while', text: 'A while loop checks its condition BEFORE each pass (it may run 0 times); do-until checks AFTER (it always runs at least once)' },
+    { id: 'I5', topics: ['2.2.1d'], skill: 'nested', text: 'Nested loops: the inner loop runs completely for EACH pass of the outer loop (outer × inner times)' },
+    { id: 'Q1', topics: ['2.2.1c'], text: 'if / elseif / else: only the FIRST true branch runs, then the rest are skipped' },
+    { id: 'Q2', topics: ['2.2.1f'], text: '= assigns a value; == compares two values' },
+    { id: 'Q3', topics: ['2.2.1f', '2.2.1c'], text: '< and <= are different: check whether the boundary value itself is included' },
+    { id: 'Q4', topics: ['2.2.1e'], text: 'DIV gives the whole number part of a division; MOD gives the remainder' },
+    { id: 'Q5', topics: ['2.2.3d'], text: 'Arrays start at index 0: the first item is array[0], the last is array[length - 1]' },
+    { id: 'Q6', topics: ['2.2.3e'], text: 'A function returns a value; a procedure does not' },
+    { id: 'Q7', topics: ['2.2.3e'], text: 'A local variable only exists inside its sub program; a global variable can be used anywhere' },
+    { id: 'Q8', topics: ['2.2.3a'], text: 'String positions start at 0; .length counts characters; substring(start, n) takes n characters' },
+    { id: 'Q9', topics: ['2.2.2b'], text: 'Input is a string: cast it with int() / float() before doing maths; str() before joining with text' },
+    { id: 'B1', topics: ['2.4.1a', '2.4.1b', '2.4.1c'], text: 'AND is 1 only when BOTH inputs are 1; OR is 1 when AT LEAST one input is 1; NOT flips the input' },
+    { id: 'B2', topics: ['1.2.4a', '1.2.4b'], text: 'Binary place values double from the right: 1, 2, 4, 8, 16, 32, 64, 128' },
+    { id: 'B3', topics: ['1.2.4b'], text: 'In binary addition 1 + 1 = 10 (write 0, carry 1); 1 + 1 + 1 = 11 (write 1, carry 1). A carry out of 8 bits is overflow' },
+    { id: 'B4', topics: ['1.2.4c'], text: 'Hex digits go 0–9 then A=10 … F=15; one hex digit = 4 bits (a nibble)' },
+    { id: 'B5', topics: ['1.2.3c'], text: 'Image size = width × height × colour depth (bits); sound = sample rate × bit depth × seconds. Divide by 8 for bytes' },
+    { id: 'G1', topics: ['2.1.3c', '2.1.3e', '2.1.3d'], text: 'Bubble sort swaps neighbouring pairs; insertion sort inserts each item into the sorted part; merge sort splits then merges' },
+    { id: 'G2', topics: ['2.1.2e'], text: 'In a trace table write a new row each time a variable changes, and follow the loop condition exactly' },
+    { id: 'H1', topics: ['1.4.1a', '1.4.1b'], text: 'Malware is software; phishing / social engineering tricks a PERSON into giving information' },
+    { id: 'H2', topics: ['1.3.2e'], text: 'HTTP/HTTPS = web pages; SMTP = sending email; POP/IMAP = receiving email; FTP = transferring files' },
     // Exam technique (any topic)
     { id: 'E1', topics: [], exam: true, text: 'Explain = make a point AND say why (because / so / therefore)' },
     { id: 'E2', topics: [], exam: true, text: 'Use precise technical vocabulary' },
@@ -312,7 +336,38 @@ var J277 = (function () {
     });
   }
 
+  // Skills: finer detail inside sub-topics that bundle different things (e.g. for vs while loops).
+  // Mastery is tracked per topic + skill, so needs can be pinned down precisely.
+  var SKILLS = {
+    '2.2.1d': [['for', 'for loops (count-controlled)'], ['while', 'while loops (condition-controlled)'], ['dountil', 'do-until loops'], ['nested', 'nested loops'], ['choose', 'choosing the right loop']],
+    '2.2.1c': [['if', 'if / else'], ['elif', 'elseif chains'], ['nested', 'nested selection'], ['switch', 'switch / case']],
+    '2.2.1e': [['basic', '+ − * /'], ['divmod', 'DIV and MOD'], ['power', 'exponent ^']],
+    '2.2.1f': [['compare', 'comparison operators'], ['boolean', 'AND / OR / NOT in conditions']],
+    '2.2.1a': [['vars', 'variables and constants'], ['io', 'input and output'], ['assign', 'assignment']],
+    '2.2.2a': [['numbers', 'integer and real'], ['bool', 'Boolean'], ['text', 'character and string']],
+    '2.2.3a': [['length', 'length'], ['substring', 'substring / slicing'], ['case', 'upper / lower'], ['concat', 'concatenation'], ['ascii', 'ASC / CHR']],
+    '2.2.3d': [['1d', '1D arrays'], ['2d', '2D arrays'], ['loop', 'looping through arrays']],
+    '2.2.3e': [['func', 'functions (return values)'], ['proc', 'procedures'], ['params', 'parameters'], ['scope', 'local and global variables']],
+    '2.2.3c': [['records', 'records and fields'], ['select', 'SQL SELECT … FROM … WHERE']],
+    '2.4.1a': [['and', 'AND'], ['or', 'OR'], ['not', 'NOT'], ['symbols', 'gate symbols']],
+    '2.4.1b': [['two', 'two-input truth tables'], ['three', 'three-input / combined truth tables']],
+    '1.2.4a': [['b2d', 'binary → denary'], ['d2b', 'denary → binary']],
+    '1.2.4b': [['add', 'binary addition'], ['overflow', 'overflow']],
+    '1.2.4c': [['h2d', 'hex ↔ denary'], ['h2b', 'hex ↔ binary']],
+    '1.2.4d': [['left', 'left shifts'], ['right', 'right shifts'], ['effect', 'effect / loss of bits']],
+    '1.2.3c': [['image', 'image file size'], ['sound', 'sound file size'], ['text', 'text file size'], ['capacity', 'capacity needed']],
+    '2.1.2e': [['loop', 'tracing loops'], ['selection', 'tracing selection'], ['output', 'predicting output']],
+    '2.3.2d': [['normal', 'normal data'], ['boundary', 'boundary data'], ['invalid', 'invalid / erroneous data']],
+    '1.3.2e': [['web', 'HTTP / HTTPS'], ['email', 'SMTP / POP / IMAP'], ['ftp', 'FTP'], ['tcpip', 'TCP/IP']]
+  };
+  function skillsFor(code) { return SKILLS[normaliseCode(code)] || []; }
+  function skillLabel(code, skill) {
+    var s = skillsFor(code).filter(function (x) { return x[0] === skill; })[0];
+    return s ? s[1] : '';
+  }
+
   return {
+    SKILLS: SKILLS, skillsFor: skillsFor, skillLabel: skillLabel,
     FEEDBACK_CODES: FEEDBACK_CODES, feedbackCode: feedbackCode, codesForTopic: codesForTopic,
     list: list, get: get, isValid: isValid, children: children, subTopics: subTopics, specPoints: specPoints,
     area: area, point: point, label: label, expand: expand, normaliseCode: normaliseCode,

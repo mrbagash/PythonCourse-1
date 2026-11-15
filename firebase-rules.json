@@ -39,6 +39,15 @@
         "$studentCode": {
           ".read": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists() || root.child('studentSessions').child(auth.uid).child('code').val() === $studentCode)"
         }
+      },
+      "hwLog": {
+        "$homeworkId": {
+          "$studentCode": {
+            "$entry": {
+              ".write": "auth != null && root.child('studentSessions').child(auth.uid).child('code').val() === $studentCode && !data.exists() && newData.exists()"
+            }
+          }
+        }
       }
     },
     "classes": {
@@ -52,6 +61,9 @@
         "apFeedback": {
           ".read": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists() || root.child('studentSessions').child(auth.uid).child('className').val() === $className)",
           ".write": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())"
+        },
+        "homework": {
+          ".read": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists() || root.child('studentSessions').child(auth.uid).child('className').val() === $className)"
         },
         "settings": {
           "covered": {
