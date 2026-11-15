@@ -843,11 +843,17 @@
         <div class="grid grid-cols-3 gap-3 mb-2">
           <label class="text-xs text-gray-500">Number of questions<input id="quiz-gcse-count" type="number" min="1" max="30" value="10" class="jhncc-focus w-full border border-gray-300 rounded px-2 py-1.5 text-sm"></label>
           <label class="text-xs text-gray-500">Seconds per question<input id="quiz-gcse-time" type="number" min="10" max="300" value="60" class="jhncc-focus w-full border border-gray-300 rounded px-2 py-1.5 text-sm"></label>
-          <label class="text-xs text-gray-600 flex items-end gap-1.5 pb-1.5"><input id="quiz-gcse-short" type="checkbox" checked> Include written answers</label>
+          <label class="text-xs text-gray-500">Type<select id="quiz-gcse-type" class="jhncc-focus w-full border border-gray-300 rounded px-2 py-1.5 text-sm"><option value="all">All types</option><option value="mcq">Multiple choice only</option><option value="short">Written only</option></select></label>
         </div>
-        <label class="text-xs text-gray-500 block mb-2">Difficulty <select id="quiz-gcse-difficulty" class="jhncc-focus border border-gray-300 rounded px-2 py-1 text-sm ml-1"><option value="">Any</option><option value="F">Foundation-style</option><option value="H">Higher-style</option></select></label>
+        <div class="flex flex-wrap items-center gap-3 mb-2">
+          <label class="text-xs text-gray-500">Difficulty <select id="quiz-gcse-difficulty" class="jhncc-focus border border-gray-300 rounded px-2 py-1 text-sm ml-1"><option value="">Any</option><option value="F">Foundation-style</option><option value="H">Higher-style</option></select></label>
+          <span class="text-xs text-gray-500">Questions:</span>
+          <label class="text-xs"><input type="radio" name="quiz-gcse-pickmode" value="random" checked> Random</label>
+          <label class="text-xs"><input type="radio" name="quiz-gcse-pickmode" value="pick"> Choose them</label>
+        </div>
         <div id="quiz-gcse-summary" class="text-xs text-gray-600 mb-1"></div>
         <div id="quiz-gcse-topics"></div>
+        <div id="quiz-gcse-pick" class="hidden mt-2"></div>
       </div>
       <div id="quiz-source-lesson">
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -1588,8 +1594,8 @@
 <script src="assets/js/assessment-scratch-module.js?v=20261116f"></script>
 <script src="assets/js/assessment-results-module.js?v=20261117a"></script>
 <script src="assets/js/fileshare-drive-module.js?v=20260701a"></script>
-<script src="assets/js/quiz-host-module.js?v=20261116c"></script>
-<script src="assets/js/quiz-student-module.js?v=20261115a"></script>
+<script src="assets/js/quiz-host-module.js?v=20261118a"></script>
+<script src="assets/js/quiz-student-module.js?v=20261118a"></script>
 <script src="assets/js/scratch-pybot-module.js?v=20260706d"></script>
 <script src="assets/js/pixel-art-module.js?v=20260706b"></script>
 <script src="assets/js/tshirt-designer-module.js?v=20260706d"></script>
@@ -1601,10 +1607,11 @@
 <script src="assets/js/gcse-core.js?v=20261117e"></script>
 <script src="assets/js/gcse-starter-bank.js?v=20261116c"></script>
 <script src="assets/js/class-page-module.js?v=20261118a"></script>
-<script src="assets/js/gcse-module.js?v=20261118e"></script>
+<script src="assets/js/gcse-module.js?v=20261118f"></script>
 <script src="assets/js/gcse-marking-module.js?v=20261118a"></script>
 <script src="assets/js/gcse-wcf-module.js?v=20261118a"></script>
 <script src="assets/js/gcse-plc-module.js?v=20261118a"></script>
+<script src="assets/js/gcse-hostquiz-module.js?v=20261118a"></script>
 <script src="assets/js/class-overview-module.js?v=20261118d"></script>
 </body>
 </html>

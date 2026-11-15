@@ -588,7 +588,8 @@ async function createHostedQuizLobby(lesson, selectedQs, forceClass) {
       lobbyCode: lobbyCode,
       hostUid: firebaseUid || null,
       lessonId: lesson.meta.id,
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      only: quiz.forceOnly && Object.keys(quiz.forceOnly).length ? quiz.forceOnly : null   // send to a group only
     });
   }
 

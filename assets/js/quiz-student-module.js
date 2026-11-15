@@ -31,6 +31,8 @@ function startForcedQuizWatcher(className) {
       state.forcedQuizCode = null;
       return;
     }
+    // Sent to a group only: other pupils are not pulled in (they can still join with the code).
+    if (forced.only && !forced.only[state.uid]) { state.forcedQuizCode = null; return; }
     if (state.forcedQuizCode === forced.lobbyCode && quiz.sessionRef) return;
     state.forcedQuizCode = forced.lobbyCode;
     // Collapse any open fullscreen editor so the quiz is visible

@@ -1711,13 +1711,22 @@ async function gcseOpenTopicQuiz(className, topics) {
 }
 function gcseBuildLiveQuizQuestions(topics, count, opts) {
   opts = opts || {};
-  var types = opts.includeShort === false ? ['mcq'] : ['mcq', 'short'];
+  var types = opts.types || (opts.includeShort === false ? ['mcq'] : ['mcq', 'short']);
   // Live quizzes show at most 4 answer buttons.
-  var pool = gcseQuestionsForTopics(topics, types, opts.difficulty || '').filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; })
-    .slice().sort(function () { return Math.random() - 0.5; }).slice(0, count);
+  var all = gcseQuestionsForTopics(topics, types, opts.difficulty || '').filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; });
+  var pool;
+  if (opts.ids) {            // teacher picked the questions: keep their order
+    var byId = {}; all.forEach(function (v) { byId[v.row.id] = v; });
+    pool = opts.ids.map(function (id) { return byId[id]; }).filter(Boolean);
+  } else {
+    var avoid = opts.avoid || {};
+    var fresh = all.filter(function (v) { return !avoid[v.row.id]; });
+    if (fresh.length < count) fresh = fresh.concat(all.filter(function (v) { return avoid[v.row.id]; }));
+    pool = fresh.slice().sort(function () { return Math.random() - 0.5; }).slice(0, count);
+  }
   return pool.map(function (v) {
     var r = v.row;
-    if (r.type === 'mcq') return { type: 'mcq', q: r.question, options: r.options.slice(0, 4), answer: r.answerIndex, duration: opts.seconds || 45, gcseQid: r.id, gcseTopics: r.topics, gcseCodes: r.codes || [] };
+    if (r.type === 'mcq') return { type: 'mcq', q: r.question + ' (' + r.marks + ' mark' + (r.marks === 1 ? '' : 's') + ')', options: r.options.slice(0, 4), answer: r.answerIndex, duration: opts.seconds || 45, gcseQid: r.id, gcseTopics: r.topics, gcseCodes: r.codes || [] };
     return { type: 'text_input', q: r.question + ' (' + r.marks + ' mark' + (r.marks === 1 ? '' : 's') + ')', answer: r.markScheme, gcseRules: r.rules, gcseMarks: r.marks, gcseQid: r.id, gcseTopics: r.topics,
       gcseCodes: r.codes || [], gcseCommand: r.command || '', duration: Math.max(opts.seconds || 90, 60) };
   });
@@ -1730,12 +1739,16 @@ async function gcseStartLiveQuiz(className, topics, qs, force) {
   await createHostedQuizLobby(lesson, qs, !!force);
 }
 
-function gcseHostCounts(includeShort, difficulty) {
+function gcseHostTypes() {
+  var v = (gEl('quiz-gcse-type') || {}).value || 'all';
+  return v === 'mcq' ? ['mcq'] : v === 'short' ? ['short'] : ['mcq', 'short'];
+}
+function gcseHostCounts(types, difficulty) {
   var counts = {};
   gcseBankUsable().forEach(function (v) {
     var r = v.row;
     if (difficulty && r.difficulty && r.difficulty !== difficulty) return;
-    if (r.type !== 'mcq' && !(includeShort && r.type === 'short')) return;
+    if (types.indexOf(r.type) === -1) return;
     if (r.type === 'mcq' && r.options.length > 4) return;
     r.topics.forEach(function (tc) { J277.expand(tc).forEach(function (s) { counts[s] = (counts[s] || 0) + 1; }); });
   });
@@ -1745,14 +1758,15 @@ function gcseRenderHostTopics() {
   var box = gEl('quiz-gcse-topics'); if (!box) return;
   var prev = {};
   document.querySelectorAll('.gcse-host-topic:checked').forEach(function (cb) { prev[cb.dataset.code] = true; });
-  var includeShort = gEl('quiz-gcse-short').checked;
+  var types = gcseHostTypes();
   var difficulty = (gEl('quiz-gcse-difficulty') || {}).value || '';
-  box.innerHTML = gcseTopicPickerHtml('gcse-host', prev, gcseHostCounts(includeShort, difficulty));
+  box.innerHTML = gcseTopicPickerHtml('gcse-host', prev, gcseHostCounts(types, difficulty));
   gcseBindTopicPicker('gcse-host');
   var update = function () {
     var picked = gcsePickedTopics('gcse-host');
-    var n = picked.length ? gcseQuestionsForTopics(picked, includeShort ? ['mcq', 'short'] : ['mcq'], difficulty).filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; }).length : 0;
+    var n = picked.length ? gcseQuestionsForTopics(picked, types, difficulty).filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; }).length : 0;
     gEl('quiz-gcse-summary').textContent = picked.length ? picked.length + ' topic' + (picked.length === 1 ? '' : 's') + ' ticked · ' + n + ' matching question' + (n === 1 ? '' : 's') + ' in the bank' : 'Tick at least one topic.';
+    if (typeof gcseHostRenderPick === 'function') gcseHostRenderPick();
   };
   box.addEventListener('change', update);
   update();
@@ -1760,12 +1774,14 @@ function gcseRenderHostTopics() {
 async function gcseStartFromHostSetup() {
   var picked = gcsePickedTopics('gcse-host');
   if (!picked.length) { alert('Tick at least one GCSE topic.'); return; }
-  var qs = gcseBuildLiveQuizQuestions(picked, Number(gEl('quiz-gcse-count').value) || 10, {
-    includeShort: gEl('quiz-gcse-short').checked, seconds: Number(gEl('quiz-gcse-time').value) || 60,
-    difficulty: (gEl('quiz-gcse-difficulty') || {}).value || ''
-  });
+  var opts = { types: gcseHostTypes(), seconds: Number(gEl('quiz-gcse-time').value) || 60, difficulty: (gEl('quiz-gcse-difficulty') || {}).value || '' };
+  var chosen = typeof gcseHostChosenIds === 'function' ? gcseHostChosenIds() : null;
+  if (chosen) opts.ids = chosen;
+  if (chosen && !chosen.length) { alert('Tick at least one question, or switch to Random.'); return; }
+  var qs = gcseBuildLiveQuizQuestions(picked, chosen ? chosen.length : (Number(gEl('quiz-gcse-count').value) || 10), opts);
   if (!qs.length) { alert('There are no bank questions for those topics yet.'); return; }
   gEl('modal-quiz-setup').classList.add('hidden');
+  if (typeof gcseHostRemember === 'function') gcseHostRemember(quiz.className, picked, opts, qs);
   await gcseStartLiveQuiz(quiz.className, picked, qs, gEl('quiz-force-class').checked);
 }
 (function gcseInitHostQuizSource() {
@@ -1783,7 +1799,7 @@ async function gcseStartFromHostSetup() {
   }
   lessonBtn.onclick = function () { setSource('lesson'); };
   gcseBtn.onclick = function () { setSource('gcse'); };
-  gEl('quiz-gcse-short').onchange = gcseRenderHostTopics;
+  gEl('quiz-gcse-type').onchange = gcseRenderHostTopics;
   if (gEl('quiz-gcse-difficulty')) gEl('quiz-gcse-difficulty').onchange = gcseRenderHostTopics;
   var originalStart = start.onclick;
   start.onclick = function (e) {
