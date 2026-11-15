@@ -65,18 +65,155 @@ function classTypeStyle(type) {
     : 'bg-amber-50 text-amber-800 border border-amber-200';
 }
 
-// Classroom Management cards: show each class's type (click to set it).
+// Suggested type from the year in the class name: 7–9 → KS3, 10–11 → GCSE (never saved until confirmed).
+function suggestClassType(className) {
+  var y = typeof classYearGroup === 'function' ? classYearGroup(className) : null;
+  if (y >= 7 && y <= 9) return 'ks3';
+  if (y === 10 || y === 11) return 'gcse';
+  return null;
+}
+
+// Classroom Management cards: show each class's type (click to set it), with a suggestion when unset.
 async function classPageFillTypeBadges() {
   var badges = document.querySelectorAll('.class-type-badge');
   var names = Array.prototype.map.call(badges, function (b) { return b.dataset.class; });
   var settings = await classSettingsMany(names);
+  classBulk.settings = settings;
   badges.forEach(function (b) {
-    var t = (settings[b.dataset.class] || {}).type;
+    var name = b.dataset.class;
+    var t = (settings[name] || {}).type;
     b.textContent = classTypeLabel(t);
     b.className = 'class-type-badge text-xs px-2 py-0.5 rounded-full cursor-pointer ' + classTypeStyle(t);
     b.title = t ? 'Open class page' : 'Choose GCSE, BTEC or KS3';
-    b.onclick = function () { openClassPage(b.dataset.class); };
+    b.onclick = function () { openClassPage(name); };
+    var old = b.parentNode.querySelector('.class-type-suggest');
+    if (old) old.remove();
+    var sug = !t && suggestClassType(name);
+    if (sug) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'class-type-suggest text-xs px-2 py-0.5 rounded-full border border-dashed border-gray-400 text-gray-600 hover:bg-gray-50';
+      btn.dataset.class = name; btn.dataset.type = sug;
+      btn.textContent = 'Set ' + CLASS_TYPES[sug] + '?';
+      btn.title = 'Suggested from the year in the class name – click to confirm';
+      btn.onclick = function () { classBulkSetType([name], sug); };
+      b.parentNode.insertBefore(btn, b);
+    }
   });
+  classBulkRender();
+}
+
+// ── Bulk setup: select many classes, set type / exam year / year group at once ──
+var classBulk = { on: false, selected: {}, settings: {} };
+function classBulkNames() {
+  return Array.prototype.map.call(document.querySelectorAll('#classroom-existing-classes .class-page-link'), function (b) { return b.dataset.class; });
+}
+function classBulkRender() {
+  var bar = document.getElementById('classroom-bulk-bar');
+  if (!bar) return;
+  var names = classBulkNames();
+  if (!names.length) { bar.innerHTML = ''; return; }
+  // Card tick boxes
+  document.querySelectorAll('#classroom-existing-classes .class-page-link').forEach(function (link) {
+    var card = link.parentNode;
+    var cb = card.querySelector('.class-bulk-check');
+    if (classBulk.on) {
+      if (!cb) {
+        cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'class-bulk-check absolute top-3 left-3 w-4 h-4'; cb.dataset.class = link.dataset.class;
+        cb.onchange = function () { if (cb.checked) classBulk.selected[cb.dataset.class] = true; else delete classBulk.selected[cb.dataset.class]; classBulkRender(); };
+        card.appendChild(cb);
+        link.classList.add('pl-6');
+      }
+      cb.checked = !!classBulk.selected[link.dataset.class];
+      card.classList.toggle('ring-2', cb.checked);
+      card.classList.toggle('ring-[rgb(176,28,35)]', cb.checked);
+    } else if (cb) { cb.remove(); link.classList.remove('pl-6'); card.classList.remove('ring-2', 'ring-[rgb(176,28,35)]'); }
+  });
+  if (!classBulk.on) {
+    bar.innerHTML = '<button type="button" id="class-bulk-toggle" class="px-3 py-1.5 rounded border border-gray-300 text-sm bg-white hover:bg-gray-50">Select classes…</button>';
+    document.getElementById('class-bulk-toggle').onclick = function () { classBulk.on = true; classBulk.selected = {}; classBulkRender(); };
+    return;
+  }
+  var years = {};
+  names.forEach(function (n) { var y = typeof classYearGroup === 'function' ? classYearGroup(n) : null; if (y) years[y] = true; });
+  var count = Object.keys(classBulk.selected).length;
+  bar.innerHTML = '<div class="rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm space-y-2">' +
+    '<div class="flex flex-wrap items-center gap-2"><b>' + count + ' selected</b>' +
+      '<span class="text-xs text-gray-500 ml-2">Select:</span>' +
+      '<button type="button" class="cb-q px-2 py-0.5 rounded border border-gray-300 bg-white text-xs" data-q="all">All</button>' +
+      '<button type="button" class="cb-q px-2 py-0.5 rounded border border-gray-300 bg-white text-xs" data-q="none">None</button>' +
+      '<button type="button" class="cb-q px-2 py-0.5 rounded border border-gray-300 bg-white text-xs" data-q="unset">Type not set</button>' +
+      Object.keys(years).sort(function (a, b) { return a - b; }).map(function (y) { return '<button type="button" class="cb-q px-2 py-0.5 rounded border border-gray-300 bg-white text-xs" data-q="y' + y + '">Year ' + y + '</button>'; }).join('') +
+      '<input id="class-bulk-search" class="border border-gray-300 rounded px-2 py-0.5 text-xs w-40" placeholder="Select by name…">' +
+      '<button type="button" id="class-bulk-done" class="ml-auto px-2 py-0.5 rounded border border-gray-300 bg-white text-xs">Done</button></div>' +
+    '<div class="flex flex-wrap items-center gap-2"><span class="text-xs text-gray-500">Set type:</span>' +
+      ['gcse', 'btec', 'ks3'].map(function (t) { return '<button type="button" class="cb-type px-3 py-1 rounded text-xs font-semibold ' + classTypeStyle(t) + '" data-type="' + t + '"' + (count ? '' : ' disabled') + '>' + CLASS_TYPES[t] + '</button>'; }).join('') +
+      '<span class="text-xs text-gray-500 ml-3">Exam year</span><input id="class-bulk-exam" type="number" min="2024" max="2040" class="border border-gray-300 rounded px-2 py-0.5 text-xs w-20" placeholder="2027">' +
+      '<span class="text-xs text-gray-500">Year group</span><input id="class-bulk-year" type="number" min="7" max="13" class="border border-gray-300 rounded px-2 py-0.5 text-xs w-14">' +
+      '<button type="button" id="class-bulk-apply" class="px-2 py-0.5 rounded border border-gray-300 bg-white text-xs"' + (count ? '' : ' disabled') + '>Apply</button>' +
+      '<button type="button" id="class-bulk-archive" class="px-2 py-0.5 rounded border border-gray-300 bg-white text-xs ml-3"' + (count ? '' : ' disabled') + '>Archive selected</button>' +
+      '<span id="class-bulk-status" class="text-xs text-gray-600"></span></div></div>';
+  bar.querySelectorAll('.cb-q').forEach(function (b) {
+    b.onclick = function () {
+      var q = b.dataset.q;
+      if (q === 'none') classBulk.selected = {};
+      names.forEach(function (n) {
+        var t = (classBulk.settings[n] || {}).type;
+        var y = typeof classYearGroup === 'function' ? classYearGroup(n) : null;
+        if (q === 'all' || (q === 'unset' && !t) || (q.charAt(0) === 'y' && String(y) === q.slice(1))) classBulk.selected[n] = true;
+      });
+      classBulkRender();
+    };
+  });
+  var search = document.getElementById('class-bulk-search');
+  search.onkeydown = function (e) {
+    if (e.key !== 'Enter' || !search.value.trim()) return;
+    var term = search.value.trim().toLowerCase();
+    names.forEach(function (n) { if (n.toLowerCase().indexOf(term) !== -1) classBulk.selected[n] = true; });
+    classBulkRender();
+  };
+  document.getElementById('class-bulk-done').onclick = function () { classBulk.on = false; classBulk.selected = {}; classBulkRender(); };
+  bar.querySelectorAll('.cb-type').forEach(function (b) { b.onclick = function () { classBulkSetType(Object.keys(classBulk.selected), b.dataset.type); }; });
+  document.getElementById('class-bulk-apply').onclick = async function () {
+    var exam = Number(document.getElementById('class-bulk-exam').value) || null;
+    var yg = Number(document.getElementById('class-bulk-year').value) || null;
+    if (!exam && !yg) { document.getElementById('class-bulk-status').textContent = 'Enter an exam year or year group first.'; return; }
+    var updates = {};
+    Object.keys(classBulk.selected).forEach(function (n) {
+      if (exam) updates['classes/' + n + '/settings/examYear'] = exam;
+      if (yg) updates['classes/' + n + '/settings/yearGroup'] = yg;
+      updates['classes/' + n + '/settings/updatedAt'] = Date.now();
+    });
+    await classBulkSave(updates, 'Updated ' + Object.keys(classBulk.selected).length + ' classes.');
+  };
+  document.getElementById('class-bulk-archive').onclick = function () {
+    var list = Object.keys(classBulk.selected);
+    if (!list.length || !confirm('Archive ' + list.length + ' class' + (list.length === 1 ? '' : 'es') + '? Nothing is deleted and you can unarchive them.')) return;
+    classBulk.selected = {};
+    setClassesArchived(list, true);
+  };
+}
+async function classBulkSetType(names, type) {
+  if (!names.length) return;
+  var updates = {};
+  names.forEach(function (n) {
+    updates['classes/' + n + '/settings/type'] = type;
+    updates['classes/' + n + '/settings/updatedAt'] = Date.now();
+  });
+  await classBulkSave(updates, 'Set ' + names.length + ' class' + (names.length === 1 ? '' : 'es') + ' to ' + CLASS_TYPES[type] + '.');
+}
+async function classBulkSave(updates, msg) {
+  try {
+    await state.db.ref().update(updates);
+    Object.keys(updates).forEach(function (k) { var n = k.split('/')[1]; delete classPage.cache[n]; });
+    await classPageFillTypeBadges();
+    var st = document.getElementById('class-bulk-status');
+    if (st) st.textContent = msg;
+    if (typeof classroomSetStatus === 'function') classroomSetStatus(msg);
+  } catch (e) {
+    if (typeof classroomSetStatus === 'function') classroomSetStatus('Could not save: ' + e.message, true);
+  }
 }
 
 document.addEventListener('click', function (e) {
