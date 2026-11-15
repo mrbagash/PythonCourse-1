@@ -3121,6 +3121,7 @@ function quizQuestionMaxPoints(q) {
   if (!q) return 0;
   if (q.type === 'pybot_level') return 5;
   if (isQuizShareQuestion(q)) return 5; // scored 0-5 by peer vote average
+  if (q.gcseRules && q.gcseMarks) return Number(q.gcseMarks) || 1; // GCSE written answers: worth their marks
   return 1;
 }
 
@@ -3143,6 +3144,12 @@ function quizAnswerPoints(q, answerSnap) {
   if (isQuizShareQuestion(q)) {
     var score = answerSnap.child('score').val();
     return (typeof score === 'number' && isFinite(score)) ? score : 0;
+  }
+  // GCSE written answers earn the marks the keyword marker gave (e.g. 1 of 2), not all-or-nothing.
+  if (q.gcseRules) {
+    var gm = answerSnap.child('gcseMarks').val();
+    if (typeof gm === 'number' && isFinite(gm)) return gm;
+    return answerSnap.child('correct').val() === true ? (Number(q.gcseMarks) || 1) : 0;
   }
   if (q.type && q.type !== 'mcq' && q.type !== 'scratch_mcq') {
     return answerSnap.child('correct').val() === true ? 1 : 0;

@@ -298,7 +298,10 @@ function renderStudentReveal(q, qIdx) {
       quiz.myScore += points;
       quiz.myScored[qIdx] = true;
     }
-    document.getElementById('qs-reveal-result').textContent = isPyBot && snap.exists() ? ('Scored ' + points + ' point' + (points === 1 ? '' : 's')) : (correct ? 'Correct!' : 'Wrong');
+    var gcseMax = q.gcseRules ? (Number(q.gcseMarks) || 1) : 0;
+    document.getElementById('qs-reveal-result').textContent = isPyBot && snap.exists() ? ('Scored ' + points + ' point' + (points === 1 ? '' : 's'))
+      : (gcseMax ? (points >= gcseMax ? 'Correct! ' : (points > 0 ? 'Partly right – ' : 'Wrong – ')) + points + ' / ' + gcseMax + ' marks'
+      : (correct ? 'Correct!' : 'Wrong'));
     var revealEl = document.getElementById('qs-reveal-answer');
     if (isPyBot) {
       var medal = snap.exists() ? snap.child('medal').val() : '';
@@ -378,9 +381,11 @@ function exitStudentQuiz(opts) {
 
 // ── Wire up join quiz button visibility ────────────────────────
 var _origUpdateAuthUI = updateAuthUI;
-updateAuthUI = function(first, last, isAdmin) {
-  _origUpdateAuthUI(first, last, isAdmin);
-  var show = !!first && !isAdmin;
+updateAuthUI = function(first, last, isAdmin, isTeacher) {
+  // Pass isTeacher through (code-login teachers need the Teacher Panel button), and show
+  // "Join Quiz/AP" for any logged-in student – code logins have no name, so don't require one.
+  _origUpdateAuthUI(first, last, isAdmin, isTeacher);
+  var show = !!state.uid && !isAdmin && !isTeacher;
   document.getElementById('btn-join-quiz').classList.toggle('hidden', !show);
 };
 
