@@ -764,6 +764,7 @@ function gcseWriteTemplate(file, aoa, nq) {
     var help = [['How to fill this in'], ['Rows 1-4 describe the test: question number, max marks, topic code(s) from the Topics tab (use + for two), command word (optional).'],
       ['Type each student\'s mark for each question.'], ['ABS = absent (left out of averages and grades).'],
       ['Leave a cell blank if the question was NOT attempted (different from 0).'], ['Do not change the Code column – it is how students are matched.'],
+      ['Names are optional: you can delete the Name column (e.g. before sharing the sheet). Only Code and the question columns are needed; Target grade and DP can be removed too.'],
       ['Target grade: U or 1-9 (optional). DP: 1 (best) to 4 (worst) – optional, the site suggests one from the target grade.']];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(help), 'Help');
     XLSX.writeFile(wb, file + '.xlsx');
@@ -805,37 +806,59 @@ async function gcseHandleUpload(file) {
   gcseRenderImportCheck(t, imp);
 }
 
+// The student header row: the first row with a "Code" cell. Name, Target grade and DP are optional
+// and can be in any column – a sheet with only Code + question columns works (no names needed).
+function gcseFindHeader(grid) {
+  var norm = function (v) { return String(v == null ? '' : v).trim().toLowerCase(); };
+  var hi = grid.findIndex(function (r) { return (r || []).some(function (c) { return /^(student )?code$/.test(norm(c)); }); });
+  if (hi === -1) return null;
+  var col = { code: -1, name: -1, target: -1, dp: -1 };
+  (grid[hi] || []).forEach(function (c, i) {
+    var h = norm(c);
+    if (col.code === -1 && /^(student )?code$/.test(h)) col.code = i;
+    else if (col.name === -1 && /^(student )?name$/.test(h)) col.name = i;
+    else if (col.target === -1 && /^target( grade)?$/.test(h)) col.target = i;
+    else if (col.dp === -1 && /^dp( \(1-4\))?$/.test(h)) col.dp = i;
+  });
+  var fixed = {}; Object.keys(col).forEach(function (k) { if (col[k] !== -1) fixed[col[k]] = true; });
+  return { hi: hi, col: col, fixed: fixed };
+}
 // Pure: turn the uploaded grid into checked rows.
 function gcseParseUpload(t, grid, classCodes) {
   var res = { rows: [], errors: [], warnings: [] };
-  var hi = grid.findIndex(function (r) { return String(r[0] || '').trim().toLowerCase() === 'name' && String(r[1] || '').trim().toLowerCase() === 'code'; });
-  if (hi === -1) { res.errors.push('Could not find the "Name | Code" header row – use the downloaded template.'); return res; }
+  var H = gcseFindHeader(grid);
+  if (!H) { res.errors.push('Could not find a "Code" column header – use the downloaded template, or put "Code" above the student codes.'); return res; }
+  var hi = H.hi, C = H.col;
   var header = grid[hi].map(function (c) { return String(c || '').trim(); });
   var qcol = {};
   (t.questions || []).forEach(function (q) {
-    var idx = header.findIndex(function (h, i) { return i >= 4 && h.toLowerCase() === q.id.toLowerCase(); });
+    var idx = header.findIndex(function (h, i) { return !H.fixed[i] && h.toLowerCase() === q.id.toLowerCase(); });
     if (idx === -1) res.errors.push('Column for ' + q.id + ' is missing from the file.');
     else qcol[q.id] = idx;
   });
   header.forEach(function (h, i) {
-    if (i >= 4 && h && !(t.questions || []).some(function (q) { return q.id.toLowerCase() === h.toLowerCase(); })) res.warnings.push('Column "' + h + '" is not in this test and was ignored.');
+    if (!H.fixed[i] && h && !(t.questions || []).some(function (q) { return q.id.toLowerCase() === h.toLowerCase(); })) res.warnings.push('Column "' + h + '" is not in this test and was ignored.');
   });
+  var at = function (line, i) { return i === -1 ? '' : String(line[i] == null ? '' : line[i]).trim(); };
   var lowerCodes = {}; classCodes.forEach(function (c) { lowerCodes[c.toLowerCase()] = c; });
   var seen = {};
   var nq = (t.questions || []).length || 1;
   for (var r = hi + 1; r < grid.length; r++) {
     var line = grid[r] || [];
-    var rawCode = String(line[1] || '').trim();
-    if (!rawCode && !String(line[0] || '').trim()) continue;
-    var row = { line: r + 1, name: String(line[0] || '').trim(), code: lowerCodes[rawCode.toLowerCase()] || rawCode, problems: [], marks: {}, absent: false };
+    var rawCode = at(line, C.code);
+    var rawName = at(line, C.name);
+    if (!rawCode && !rawName) continue;
+    var matched = lowerCodes[rawCode.toLowerCase()] || rawCode;
+    var row = { line: r + 1, name: rawName || gName(matched) || '', code: matched, problems: [], marks: {}, absent: false };
     if (!rawCode) row.problems.push('No code');
     else if (!lowerCodes[rawCode.toLowerCase()]) row.problems.push('Code not in ' + t.className);
     if (seen[row.code.toLowerCase()]) row.problems.push('Duplicate row');
     seen[row.code.toLowerCase()] = true;
-    var tg = GcseCore.parseGrade(line[2]);
-    if (tg === undefined) row.problems.push('Target grade "' + line[2] + '" should be U or 1–9');
+    var tgRaw = at(line, C.target);
+    var tg = GcseCore.parseGrade(tgRaw);
+    if (tg === undefined) row.problems.push('Target grade "' + tgRaw + '" should be U or 1–9');
     row.target = tg === undefined ? null : tg;
-    var dpRaw = String(line[3] || '').trim();
+    var dpRaw = at(line, C.dp);
     row.dp = dpRaw ? Number(dpRaw) : null;
     if (dpRaw && !(row.dp >= 1 && row.dp <= 4 && Math.round(row.dp) === row.dp)) { row.problems.push('DP must be 1–4'); row.dp = null; }
     var abs = 0, score = 0, na = 0;
@@ -939,8 +962,9 @@ async function gcseDownloadBlankTemplate() {
 // Pure: read a whole test spreadsheet (question rows above the Name/Code row).
 function gcseParseTestSheet(grid, title, className, classCodes) {
   var out = { map: null, imp: null, test: null, errors: [] };
-  var hi = grid.findIndex(function (r) { return String(r[0] || '').trim().toLowerCase() === 'name' && String(r[1] || '').trim().toLowerCase() === 'code'; });
-  if (hi === -1) { out.errors.push('Could not find the "Name | Code" row – use the blank test spreadsheet.'); return out; }
+  var H = gcseFindHeader(grid);
+  if (!H) { out.errors.push('Could not find the "Code" header row – use the blank test spreadsheet.'); return out; }
+  var hi = H.hi;
   var rowOf = {};
   for (var r = 0; r < hi; r++) {
     var key = String(grid[r][0] || '').trim().toLowerCase();
@@ -950,7 +974,7 @@ function gcseParseTestSheet(grid, title, className, classCodes) {
     out.errors.push('The spreadsheet needs "Question", "Max marks" and "Topic" rows above the Name/Code row.'); return out;
   }
   var cols = [];
-  (grid[rowOf.question] || []).forEach(function (v, c) { if (c >= 4 && String(v || '').trim()) cols.push(c); });
+  (grid[rowOf.question] || []).forEach(function (v, c) { if (c > 0 && !H.fixed[c] && String(v || '').trim()) cols.push(c); });
   var cell = function (row, c) { return row == null ? '' : String((grid[row] || [])[c] == null ? '' : grid[row][c]).trim(); };
   var lines = ['Question,Max marks,Topic,Second topic,Command word'].concat(cols.map(function (c) {
     var topics = cell(rowOf.topic, c).split(/[+,;]/).map(function (x) { return x.trim(); }).filter(Boolean);
