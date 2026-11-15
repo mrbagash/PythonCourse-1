@@ -261,6 +261,9 @@ function gcseTopicCodesGuide(kind) {
     L.push('  =lossless|no data lost           (any of these words)');
     L.push('Test answers (short only, one per line "marks | answer"): at least 3, including one full-mark and one 0-mark');
     L.push('answer, plus tricky wrong answers students really write, e.g. "0 | The MDR stores the address of the instruction".');
+    L.push('Difficulty: F (Foundation-style) or H (Higher-style).');
+    L.push('Feedback codes (optional): the common mix-up(s) the question tests, e.g. R1. Codes:');
+    J277.FEEDBACK_CODES.forEach(function (c) { L.push('  ' + c.id + '  ' + c.text); });
   } else {
     L.push('TASK: Read the attached question paper and list EVERY question part.');
     L.push('For each part give: question number, maximum marks, the most specific topic code from the list below,');
@@ -1229,8 +1232,10 @@ function gcseStartPractice(pool, title) {
           box.querySelectorAll('.gcse-mcq').forEach(function (x) { x.disabled = true; });
           var right = Number(b.dataset.i) === q.answerIndex;
           max += q.marks; if (right) score += q.marks;
-          gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.q }, q.options[Number(b.dataset.i)], { marks: right ? q.marks : 0, max: q.marks, needsCheck: false }, 'practice');
-          gEl('gcse-practice-result').innerHTML = '<div class="rounded p-2 ' + (right ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800') + '">' + (right ? 'Correct!' : 'Not quite. The answer is ' + String.fromCharCode(65 + q.answerIndex) + '. ' + gEsc(q.options[q.answerIndex])) + '</div>' + nextBtn;
+          var mcqResult = { marks: right ? q.marks : 0, max: q.marks, needsCheck: false };
+          var mcqCodes = right ? [] : GcseCore.suggestFeedbackCodes({ type: 'mcq', topics: q.topics, codes: q.codes }, q.options[Number(b.dataset.i)], mcqResult, J277);
+          gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.q, gcseCodes: mcqCodes }, q.options[Number(b.dataset.i)], mcqResult, 'practice');
+          gEl('gcse-practice-result').innerHTML = '<div class="rounded p-2 ' + (right ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800') + '">' + (right ? 'Correct!' : 'Not quite. The answer is ' + String.fromCharCode(65 + q.answerIndex) + '. ' + gEsc(q.options[q.answerIndex])) + gcseCodeHtml(mcqCodes) + '</div>' + nextBtn;
           gEl('gcse-practice-next').onclick = next;
         };
       });
@@ -1246,10 +1251,11 @@ function gcseStartPractice(pool, title) {
       if (q.type === 'short') {
         var m = GcseCore.mark(q.rules, answer, q.marks);
         max += q.marks; score += m.marks;
-        gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.q }, answer, m, 'practice');
+        var codes = GcseCore.suggestFeedbackCodes({ type: 'short', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, answer, m, J277);
+        gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.q, gcseCodes: codes }, answer, m, 'practice');
         res.innerHTML = '<div class="rounded p-2 ' + (m.marks >= m.max ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-900') + '"><b>' + m.marks + ' / ' + m.max + '</b>' +
           (m.needsCheck ? ' – your teacher will check this one.' : '') + '<ul class="text-xs list-disc ml-5 mt-1">' +
-          m.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul></div>' + scheme +
+          m.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul>' + gcseCodeHtml(codes) + '</div>' + scheme +
           (!m.needsCheck && m.marks < m.max ? '<button type="button" id="gcse-appeal" class="mt-2 text-xs px-2 py-1 rounded border border-blue-300 text-blue-700">I think I\'m right – ask my teacher</button>' : '') + nextBtn;
         var ap = gEl('gcse-appeal');
         if (ap) ap.onclick = function () {
@@ -1289,6 +1295,15 @@ function gcseRecordQuizAttempt(q, answer, result, source) {
       cur.attempted = (cur.attempted || 0) + 1;
       if (full) cur.correct = (cur.correct || 0) + 1;
       cur.lastAt = Date.now();
+      return cur;
+    }, null, false);
+  });
+  // Misconceptions (feedback codes) this student has shown – used by profiles and class progress.
+  (q.gcseCodes || []).forEach(function (id) {
+    if (!result || result.marks >= result.max) return;
+    state.db.ref('progress/' + state.uid + '/gcseMisconceptions/' + id).transaction(function (cur) {
+      cur = cur || { count: 0 };
+      cur.count = (cur.count || 0) + 1; cur.lastAt = Date.now(); cur.source = source;
       return cur;
     }, null, false);
   });
@@ -1368,15 +1383,24 @@ async function gcseLoadBankFromDrive() {
 }
 function gcsePracticeItem(v) {
   var r = v.row;
-  return { id: r.id, type: r.type, q: r.question, options: r.options, answerIndex: r.answerIndex, marks: r.marks, rules: r.rules || '', markScheme: r.markScheme || '', topics: r.topics };
+  return { id: r.id, type: r.type, q: r.question, options: r.options, answerIndex: r.answerIndex, marks: r.marks, rules: r.rules || '', markScheme: r.markScheme || '',
+    topics: r.topics, command: r.command || '', codes: r.codes || [], difficulty: r.difficulty || '' };
 }
 // Quiz-usable bank questions for these topics (a spec point includes its sub-topics).
-function gcseQuestionsForTopics(topicCodes, types) {
+// difficulty: '' (any) | 'F' | 'H' – questions with no difficulty count as both.
+function gcseQuestionsForTopics(topicCodes, types, difficulty) {
   var wanted = {};
   topicCodes.forEach(function (c) { J277.expand(c).concat([J277.normaliseCode(c)]).forEach(function (s) { wanted[s] = true; }); });
   return gcseBankUsable().filter(function (v) {
+    if (difficulty && v.row.difficulty && v.row.difficulty !== difficulty) return false;
     return v.quizUsable && (!types || types.indexOf(v.row.type) !== -1) && v.row.topics.some(function (tc) { return wanted[tc] || J277.expand(tc).some(function (s) { return wanted[s]; }); });
   });
+}
+function gcseCodeHtml(ids) {
+  return (ids || []).map(function (id) {
+    var c = J277.feedbackCode(id);
+    return c ? '<div class="text-xs mt-1"><span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">' + gEsc(c.id) + '</span> ' + gEsc(c.text) + '</div>' : '';
+  }).join('');
 }
 function gcsePracticePoolFor(topicCodes) {
   var byTopic = {};
@@ -1424,6 +1448,10 @@ function gcseRenderBankHealth(b) {
   var h = '<div class="grid grid-cols-3 gap-2 mb-3 text-center"><div class="rounded border bg-green-50 border-green-100 p-2"><div class="text-xl font-bold text-green-700">' + live.length + '</div><div class="text-xs">Live questions</div></div>' +
     '<div class="rounded border bg-red-50 border-red-100 p-2"><div class="text-xl font-bold text-red-700">' + off.length + '</div><div class="text-xs">Not live (need fixing)</div></div>' +
     '<div class="rounded border bg-blue-50 border-blue-100 p-2"><div class="text-xl font-bold text-blue-700">' + Object.keys(perTopic).length + '</div><div class="text-xs">Topics covered</div></div></div>' +
+    '<p class="text-xs text-gray-600 mb-1">Difficulty: <b>' + live.filter(function (v) { return v.row.difficulty === 'F'; }).length + '</b> Foundation-style · <b>' +
+      live.filter(function (v) { return v.row.difficulty === 'H'; }).length + '</b> Higher-style · <b>' + live.filter(function (v) { return !v.row.difficulty; }).length + '</b> not set</p>' +
+    '<details class="mb-3 text-xs"><summary class="cursor-pointer text-gray-700 font-semibold">Feedback codes (' + J277.FEEDBACK_CODES.length + ')</summary><table class="mt-1 w-full">' +
+      J277.FEEDBACK_CODES.map(function (c) { return '<tr class="border-t"><td class="p-1 font-bold">' + gEsc(c.id) + '</td><td class="p-1">' + gEsc(c.text) + '</td><td class="p-1 text-gray-500">' + gEsc(c.exam ? 'Exam technique' : c.topics.join(', ')) + '</td></tr>'; }).join('') + '</table></details>' +
     '<p class="text-xs text-gray-600 mb-3">' + starterLive + ' built-in starter questions (original J277 exam-style, labelled as such) + ' + driveCount + ' from your Google Sheet' +
     (b && b.loadedAt ? '' : ' (not loaded yet – click Load to add your past papers)') + '.</p>';
   if (off.length) h += '<div class="border border-red-200 rounded-lg p-3 mb-3"><h4 class="font-bold text-red-700 mb-2">Not live yet</h4><table class="w-full text-xs">' + off.map(function (v) {
@@ -1500,12 +1528,13 @@ function gcseBuildLiveQuizQuestions(topics, count, opts) {
   opts = opts || {};
   var types = opts.includeShort === false ? ['mcq'] : ['mcq', 'short'];
   // Live quizzes show at most 4 answer buttons.
-  var pool = gcseQuestionsForTopics(topics, types).filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; })
+  var pool = gcseQuestionsForTopics(topics, types, opts.difficulty || '').filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; })
     .slice().sort(function () { return Math.random() - 0.5; }).slice(0, count);
   return pool.map(function (v) {
     var r = v.row;
-    if (r.type === 'mcq') return { type: 'mcq', q: r.question, options: r.options.slice(0, 4), answer: r.answerIndex, duration: opts.seconds || 45, gcseQid: r.id, gcseTopics: r.topics };
-    return { type: 'text_input', q: r.question + ' (' + r.marks + ' mark' + (r.marks === 1 ? '' : 's') + ')', answer: r.markScheme, gcseRules: r.rules, gcseMarks: r.marks, gcseQid: r.id, gcseTopics: r.topics, duration: Math.max(opts.seconds || 90, 60) };
+    if (r.type === 'mcq') return { type: 'mcq', q: r.question, options: r.options.slice(0, 4), answer: r.answerIndex, duration: opts.seconds || 45, gcseQid: r.id, gcseTopics: r.topics, gcseCodes: r.codes || [] };
+    return { type: 'text_input', q: r.question + ' (' + r.marks + ' mark' + (r.marks === 1 ? '' : 's') + ')', answer: r.markScheme, gcseRules: r.rules, gcseMarks: r.marks, gcseQid: r.id, gcseTopics: r.topics,
+      gcseCodes: r.codes || [], gcseCommand: r.command || '', duration: Math.max(opts.seconds || 90, 60) };
   });
 }
 async function gcseStartLiveQuiz(className, topics, qs, force) {
@@ -1516,10 +1545,11 @@ async function gcseStartLiveQuiz(className, topics, qs, force) {
   await createHostedQuizLobby(lesson, qs, !!force);
 }
 
-function gcseHostCounts(includeShort) {
+function gcseHostCounts(includeShort, difficulty) {
   var counts = {};
   gcseBankUsable().forEach(function (v) {
     var r = v.row;
+    if (difficulty && r.difficulty && r.difficulty !== difficulty) return;
     if (r.type !== 'mcq' && !(includeShort && r.type === 'short')) return;
     if (r.type === 'mcq' && r.options.length > 4) return;
     r.topics.forEach(function (tc) { J277.expand(tc).forEach(function (s) { counts[s] = (counts[s] || 0) + 1; }); });
@@ -1531,11 +1561,12 @@ function gcseRenderHostTopics() {
   var prev = {};
   document.querySelectorAll('.gcse-host-topic:checked').forEach(function (cb) { prev[cb.dataset.code] = true; });
   var includeShort = gEl('quiz-gcse-short').checked;
-  box.innerHTML = gcseTopicPickerHtml('gcse-host', prev, gcseHostCounts(includeShort));
+  var difficulty = (gEl('quiz-gcse-difficulty') || {}).value || '';
+  box.innerHTML = gcseTopicPickerHtml('gcse-host', prev, gcseHostCounts(includeShort, difficulty));
   gcseBindTopicPicker('gcse-host');
   var update = function () {
     var picked = gcsePickedTopics('gcse-host');
-    var n = picked.length ? gcseQuestionsForTopics(picked, includeShort ? ['mcq', 'short'] : ['mcq']).filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; }).length : 0;
+    var n = picked.length ? gcseQuestionsForTopics(picked, includeShort ? ['mcq', 'short'] : ['mcq'], difficulty).filter(function (v) { return v.row.type !== 'mcq' || v.row.options.length <= 4; }).length : 0;
     gEl('quiz-gcse-summary').textContent = picked.length ? picked.length + ' topic' + (picked.length === 1 ? '' : 's') + ' ticked · ' + n + ' matching question' + (n === 1 ? '' : 's') + ' in the bank' : 'Tick at least one topic.';
   };
   box.addEventListener('change', update);
@@ -1545,7 +1576,8 @@ async function gcseStartFromHostSetup() {
   var picked = gcsePickedTopics('gcse-host');
   if (!picked.length) { alert('Tick at least one GCSE topic.'); return; }
   var qs = gcseBuildLiveQuizQuestions(picked, Number(gEl('quiz-gcse-count').value) || 10, {
-    includeShort: gEl('quiz-gcse-short').checked, seconds: Number(gEl('quiz-gcse-time').value) || 60
+    includeShort: gEl('quiz-gcse-short').checked, seconds: Number(gEl('quiz-gcse-time').value) || 60,
+    difficulty: (gEl('quiz-gcse-difficulty') || {}).value || ''
   });
   if (!qs.length) { alert('There are no bank questions for those topics yet.'); return; }
   gEl('modal-quiz-setup').classList.add('hidden');
@@ -1567,6 +1599,7 @@ async function gcseStartFromHostSetup() {
   lessonBtn.onclick = function () { setSource('lesson'); };
   gcseBtn.onclick = function () { setSource('gcse'); };
   gEl('quiz-gcse-short').onchange = gcseRenderHostTopics;
+  if (gEl('quiz-gcse-difficulty')) gEl('quiz-gcse-difficulty').onchange = gcseRenderHostTopics;
   var originalStart = start.onclick;
   start.onclick = function (e) {
     if (gcse.hostSource === 'gcse') return gcseStartFromHostSetup();
@@ -1594,7 +1627,11 @@ async function gcseStartFromHostSetup() {
 // ── Test generator (past-paper questions only) ──────────────────
 function gcseGeneratorPool() {
   var includeStarter = gcse.genIncludeStarter === true;
-  return gcseBankUsable().filter(function (v) { return includeStarter || !v.row.starter; });
+  var difficulty = gcse.genDifficulty || '';
+  return gcseBankUsable().filter(function (v) {
+    if (difficulty && v.row.difficulty && v.row.difficulty !== difficulty) return false;
+    return includeStarter || !v.row.starter;
+  });
 }
 async function gcseRenderGenerateView() {
   var body = gEl('gcse-body');
@@ -1611,11 +1648,13 @@ async function gcseRenderGenerateView() {
     '<label class="text-xs text-gray-600">Class<select id="gcse-gen-class" class="block border border-gray-300 rounded px-2 py-1 text-sm">' + classOpts + '</select></label>' +
     '<label class="text-xs text-gray-600">Total marks<input id="gcse-gen-marks" type="number" min="5" value="50" class="block w-20 border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
     '<label class="text-xs text-gray-600">Paper<select id="gcse-gen-paper" class="block border border-gray-300 rounded px-2 py-1 text-sm"><option value="">Mix</option><option value="1">Paper 1</option><option value="2">Paper 2</option></select></label>' +
+    '<label class="text-xs text-gray-600">Difficulty<select id="gcse-gen-difficulty" class="block border border-gray-300 rounded px-2 py-1 text-sm"><option value="">Any</option><option value="F"' + (gcse.genDifficulty === 'F' ? ' selected' : '') + '>Foundation-style</option><option value="H"' + (gcse.genDifficulty === 'H' ? ' selected' : '') + '>Higher-style</option></select></label>' +
     '<label class="text-xs text-gray-600">Title<input id="gcse-gen-title" class="block border border-gray-300 rounded px-2 py-1 text-sm" placeholder="Y10 Test – Systems architecture"></label></div>' +
     '<div class="text-xs text-gray-600 mb-1">Tick what they have learnt so far:</div>' + gcseTopicPickerHtml('gcse-gen', {}, counts, coverage) +
     '<button type="button" id="gcse-gen-go" class="jhncc-primary mt-3 px-4 py-1.5 rounded text-sm font-semibold">Generate test</button></div><div id="gcse-gen-out"></div></div>';
   gcseBindTopicPicker('gcse-gen');
   gEl('gcse-gen-starter').onchange = function () { gcse.genIncludeStarter = this.checked; gcseRenderGenerateView(); };
+  gEl('gcse-gen-difficulty').onchange = function () { gcse.genDifficulty = this.value; gcseRenderGenerateView(); };
   gEl('gcse-gen-class').onchange = function () { gcse.className = this.value; gcseRenderGenerateView(); };
   gEl('gcse-gen-go').onclick = function () { gcseRunGenerator(); };
 }

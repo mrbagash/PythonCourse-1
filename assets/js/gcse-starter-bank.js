@@ -174,6 +174,20 @@ var GCSE_STARTER_BANK = (function () {
   long(2, '2.3.1a', 'Describe', 4, 'Describe two methods of defensive design.',
     'Input validation – checking data entered is sensible before it is used\nAuthentication – e.g. usernames and passwords to confirm identity\nAnticipating misuse – planning for how users might break the program\nMaintainability – comments, indentation, sensible names, sub programs');
 
+  // Difficulty: recall / 1-mark questions are Foundation-style; 2+ mark written answers are Higher-style.
+  // Feedback codes: the common mix-up each question targets (shown when a student gets it wrong).
+  rows.forEach(function (r) {
+    r.difficulty = (r.type === 'mcq' || (r.type === 'short' && r.marks === 1)) ? 'F' : 'H';
+    var t = r.topics[0], q = r.question;
+    var codes = [];
+    if (t === '1.1.1e') {
+      if (/Address Register|\bMAR\b|data or instruction that has just been fetched|Data Register|\bMDR\b/.test(q)) codes.push('R1');
+      if (/Program Counter|next instruction/.test(q)) codes.push('R2');
+      if (/accumulator/i.test(q)) codes.push('R3');
+    }
+    if (/^Explain/.test(r.command)) codes.push('E1');
+    r.codes = codes;
+  });
   return rows;
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = GCSE_STARTER_BANK;

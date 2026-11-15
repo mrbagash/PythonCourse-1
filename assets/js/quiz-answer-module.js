@@ -208,6 +208,9 @@ async function submitStudentTextAnswer(qIdx) {
     answerRecord.gcseMarks = gcseResult.marks;
     answerRecord.gcseMax = gcseResult.max;
     answerRecord.needsCheck = !!gcseResult.needsCheck;
+    var gcseCodes = (typeof J277 !== 'undefined') ? GcseCore.suggestFeedbackCodes({ type: 'short', topics: q.gcseTopics || [], codes: q.gcseCodes || [], command: q.gcseCommand || '', marks: q.gcseMarks || 1 }, answerText, gcseResult, J277) : [];
+    if (gcseCodes.length) answerRecord.codes = gcseCodes;
+    q = Object.assign({}, q, { gcseCodes: gcseCodes });
     if (typeof gcseRecordQuizAttempt === 'function') gcseRecordQuizAttempt(q, answerText, gcseResult, 'live');
   }
   await quiz.sessionRef.child('answers/' + qIdx + '/' + state.uid).set(answerRecord);

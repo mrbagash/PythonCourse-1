@@ -218,15 +218,15 @@ var GcseCore = (function () {
       });
     });
     var has = function (r) { return outcomes.some(function (o) { return o.result === r; }); };
-    if (has('hedge')) return { awarded: 0, reason: 'Gave both a right and a wrong answer together (no mark)' };
-    if (has('accept') && (has('reject') || has('denies-correct'))) return { awarded: 0, reason: 'Contradicts itself', needsCheck: true };
+    if (has('hedge')) return { awarded: 0, reason: 'Gave both a right and a wrong answer together (no mark)', hedge: true, subject: point.subject };
+    if (has('accept') && (has('reject') || has('denies-correct'))) return { awarded: 0, reason: 'Contradicts itself', needsCheck: true, hedge: true, subject: point.subject };
     if (has('accept')) {
       var fz = outcomes.some(function (o) { return o.result === 'accept' && o.fuzzy; });
       return { awarded: point.weight, reason: fz ? 'Correct (allowing for spelling)' : 'Correct' };
     }
     if (has('reject')) {
       var wrong = outcomes.filter(function (o) { return o.result === 'reject'; })[0].wrong;
-      return { awarded: 0, reason: 'Says it is "' + wrong + '" – that is not right' };
+      return { awarded: 0, reason: 'Says it is "' + wrong + '" – that is not right', wrong: wrong, subject: point.subject };
     }
     if (has('denies-correct')) return { awarded: 0, reason: 'Says the correct thing does NOT happen' };
     if (has('unclear')) return { awarded: 0, reason: 'Not clear what is meant', needsCheck: true };
@@ -273,6 +273,42 @@ var GcseCore = (function () {
     result.marks = Math.min(total, cap);
     if (words.length > 40 && result.marks < cap) { result.needsCheck = true; result.reasons.push('Long answer – worth a human check'); }
     return result;
+  }
+
+  // Suggest feedback codes (J277.FEEDBACK_CODES) for a marked answer.
+  //   q: { type, command, topics, codes, marks }  result: from mark() (or { marks, max } for MCQ)
+  // Firebase can hand lists back as objects ({0:..,1:..}) – accept either.
+  function asList(v) {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object') return Object.keys(v).map(function (k) { return v[k]; });
+    return v ? [v] : [];
+  }
+  function suggestFeedbackCodes(q, answer, result, J) {
+    q = Object.assign({}, q, { codes: asList(q.codes), topics: asList(q.topics) });
+    var out = [];
+    var add = function (id) { if (id && out.indexOf(id) === -1) out.push(id); };
+    if (!J || !J.FEEDBACK_CODES) return out;
+    if (!String(answer == null ? '' : answer).trim()) { add('E4'); return out; }
+    if (result && result.marks >= result.max) return out;
+    ((result && result.points) || []).forEach(function (p) {
+      if (p.hedge) add('E6');
+      if (!p.subject || !p.subject.length) return;
+      J.FEEDBACK_CODES.forEach(function (c) {
+        if (!c.subjects) return;
+        var subjectHit = c.subjects.some(function (sub) { return p.subject.indexOf(stem(sub)) !== -1; });
+        var wrongHit = !c.wrong || !p.wrong || c.wrong.some(function (w) { return stem(w) === stem(p.wrong); });
+        if (subjectHit && wrongHit && (p.wrong || p.hedge)) add(c.id);
+      });
+    });
+    if (/^explain/i.test(String(q.command || '')) && !/\b(because|so|therefore|this means|which means|as a result)\b/i.test(String(answer))) add('E1');
+    if (q.type === 'mcq') {
+      var explicit = (q.codes || []).filter(function (id) { return J.feedbackCode(id); });
+      if (explicit.length) explicit.forEach(add);
+      else (q.topics || []).forEach(function (tc) { J.codesForTopic(tc).filter(function (c) { return !c.exam; }).slice(0, 2).forEach(function (c) { add(c.id); }); });
+    } else if (!out.length) {
+      (q.codes || []).forEach(add);
+    }
+    return out;
   }
 
   // "2 | The MDR stores data" per line
@@ -412,7 +448,14 @@ var GcseCore = (function () {
   }
 
   // ── Question bank validation ────────────────────────────────
-  var BANK_HEADERS = ['ID', 'Paper', 'Topics', 'Command word', 'Marks', 'Type', 'Question', 'Options', 'Answer', 'Mark scheme', 'Marking rules', 'Test answers', 'Source', 'Reworded from'];
+  var BANK_HEADERS = ['ID', 'Paper', 'Topics', 'Command word', 'Marks', 'Type', 'Question', 'Options', 'Answer', 'Mark scheme', 'Marking rules', 'Test answers', 'Source', 'Reworded from', 'Difficulty', 'Feedback codes'];
+  // "F" / "Foundation" → F, "H" / "Higher" → H, anything else → '' (both tiers)
+  function normaliseDifficulty(v) {
+    var x = String(v || '').trim().toLowerCase();
+    if (x === 'f' || x.indexOf('found') === 0) return 'F';
+    if (x === 'h' || x.indexOf('high') === 0) return 'H';
+    return '';
+  }
   var BANK_TYPES = ['mcq', 'short', 'long', 'paper'];
 
   function bankRowFromCells(cells, headerIdx) {
@@ -422,7 +465,9 @@ var GcseCore = (function () {
       command: get('Command word'), marks: Number(get('Marks')), type: get('Type').toLowerCase(),
       question: get('Question'), options: get('Options').split('|').map(function (o) { return o.trim(); }).filter(Boolean),
       answer: get('Answer'), markScheme: get('Mark scheme'), rules: get('Marking rules'), tests: get('Test answers'),
-      source: get('Source'), rewordedFrom: get('Reworded from')
+      source: get('Source'), rewordedFrom: get('Reworded from'),
+      difficulty: normaliseDifficulty(get('Difficulty')),
+      codes: get('Feedback codes').split(/[\s,;]+/).map(function (c) { return c.trim().toUpperCase(); }).filter(Boolean)
     };
   }
 
@@ -437,6 +482,8 @@ var GcseCore = (function () {
       if (!(r.marks > 0)) errors.push('Missing marks');
       if (BANK_TYPES.indexOf(r.type) === -1) errors.push('Type must be mcq, short, long or paper');
       if (!r.topics.length) errors.push('Missing topic');
+      r.difficulty = normaliseDifficulty(r.difficulty);
+      (r.codes || []).forEach(function (c) { if (J && J.feedbackCode && !J.feedbackCode(c)) errors.push('Unknown feedback code ' + c); });
       r.topics = r.topics.map(function (t) { return J ? J.normaliseCode(t) : t; });
       r.topics.forEach(function (t) { if (J && !J.isValid(t)) errors.push('Unknown topic ' + t); });
       // Real exam questions only: a past-paper source, or reworded from one that has a source.
@@ -480,7 +527,8 @@ var GcseCore = (function () {
     normaliseText: normaliseText, stem: stem, editDistance: editDistance, parseRules: parseRules, mark: mark,
     parseTestAnswers: parseTestAnswers, parseTestMap: parseTestMap, splitRow: splitRow,
     gradeFor: gradeFor, gradeLabel: gradeLabel, defaultBoundaries: defaultBoundaries, DEFAULT_BOUNDARY_SOURCE: DEFAULT_BOUNDARY_SOURCE,
-    componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf, parseGrade: parseGrade, suggestDp: suggestDp,
+    componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf,
+    suggestFeedbackCodes: suggestFeedbackCodes, normaliseDifficulty: normaliseDifficulty, asList: asList, parseGrade: parseGrade, suggestDp: suggestDp,
     BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, bankRowFromCells: bankRowFromCells, validateBank: validateBank
   };
 })();

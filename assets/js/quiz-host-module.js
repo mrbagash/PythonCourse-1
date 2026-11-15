@@ -575,7 +575,9 @@ async function createHostedQuizLobby(lesson, selectedQs, forceClass) {
         gcseRules: q.gcseRules || null,
         gcseMarks: q.gcseMarks || null,
         gcseQid: q.gcseQid || null,
-        gcseTopics: q.gcseTopics || null
+        gcseTopics: q.gcseTopics || null,
+        gcseCodes: q.gcseCodes || null,
+        gcseCommand: q.gcseCommand || null
       };
     }),
   });

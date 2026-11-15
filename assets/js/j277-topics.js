@@ -211,6 +211,46 @@ var J277 = (function () {
     '2.5.1c': ['A compiler translates the whole program at once; an interpreter line by line']
   };
 
+  // Feedback codes: one per common mix-up, plus exam technique. Used in marking, individual
+  // feedback and the WCF. `subjects` + `wrong` let the marker suggest a code automatically
+  // (e.g. a sentence about the MDR whose stored thing is "address" → R1).
+  var FEEDBACK_CODES = [
+    { id: 'C1', topics: ['1.1.1a'], text: 'Fetch-execute order is fetch → decode → execute' },
+    { id: 'C2', topics: ['1.1.1b', '1.1.1c'], text: 'ALU does calculations/logic; CU decodes and sends control signals', subjects: ['alu', 'cu'], wrong: ['decode', 'signal', 'calculation', 'arithmetic'] },
+    { id: 'C3', topics: ['1.1.1d'], text: 'Cache is fast memory in/near the CPU for frequently used data – not secondary storage' },
+    { id: 'R1', topics: ['1.1.1e'], text: 'MAR holds an ADDRESS; MDR holds DATA or an INSTRUCTION', subjects: ['mar', 'mdr'], wrong: ['address', 'data', 'instruction'] },
+    { id: 'R2', topics: ['1.1.1e'], text: 'PC holds the address of the NEXT instruction (not the current one)', subjects: ['pc'], wrong: ['instruction', 'address', 'data'] },
+    { id: 'R3', topics: ['1.1.1e'], text: 'The accumulator holds the result of calculations from the ALU', subjects: ['acc'], wrong: ['address', 'instruction'] },
+    { id: 'C4', topics: ['1.1.1f'], text: 'Von Neumann: data and instructions are stored together in the same memory' },
+    { id: 'P1', topics: ['1.1.2a'], text: 'Clock speed = cycles/instructions per second (Hz), not storage' },
+    { id: 'P2', topics: ['1.1.2c'], text: 'More cores only help if the program can run tasks in parallel' },
+    { id: 'M1', topics: ['1.2.1b'], text: 'RAM is volatile and read/write; ROM is non-volatile and read-only' },
+    { id: 'M2', topics: ['1.2.1e'], text: 'Virtual memory uses secondary storage when RAM is full – it is slower, not extra RAM' },
+    { id: 'S1', topics: ['1.2.2c', '1.2.2d'], text: 'Magnetic storage has moving parts; solid state has none' },
+    { id: 'D1', topics: ['1.2.3a'], text: 'Units: 1 nibble = 4 bits, 1 byte = 8 bits, 1 KB = 1000 bytes' },
+    { id: 'D2', topics: ['1.2.4d'], text: 'Left shift multiplies by 2 per place; right shift divides' },
+    { id: 'D3', topics: ['1.2.4f'], text: 'Colour depth = bits per pixel; resolution = number of pixels' },
+    { id: 'D4', topics: ['1.2.4g'], text: 'Sample rate = samples per second; bit depth = bits per sample' },
+    { id: 'D5', topics: ['1.2.5b', '1.2.5c'], text: 'Lossy permanently removes data; lossless can restore the original' },
+    { id: 'N1', topics: ['1.3.1a'], text: 'LAN = small area; WAN = large area, using infrastructure owned by others' },
+    { id: 'N2', topics: ['1.3.1d'], text: 'A switch sends data to devices on a LAN; a router sends data between networks', subjects: ['switch', 'router'] },
+    { id: 'N3', topics: ['1.3.2c'], text: 'IP addresses are logical and can change; MAC addresses are fixed to the hardware' },
+    { id: 'N4', topics: ['1.4.2c', '1.4.2b'], text: 'A firewall filters network traffic; anti-malware removes malware' },
+    { id: 'O1', topics: ['1.5.2b'], text: 'Defragmentation is for magnetic hard drives, not SSDs' },
+    { id: 'A1', topics: ['2.1.3a', '2.1.3b'], text: 'Binary search needs SORTED data; linear search does not' },
+    { id: 'A2', topics: ['2.2.2a'], text: 'Real = decimal number, integer = whole number, character = one symbol, string = several' },
+    { id: 'T1', topics: ['2.3.2c'], text: 'Syntax error = breaks the language rules (won\'t run); logic error = runs but wrong result' },
+    { id: 'T2', topics: ['2.3.2d'], text: 'Boundary data is at the edge of the valid range; erroneous data should be rejected' },
+    { id: 'L1', topics: ['2.5.1c'], text: 'Compiler translates the whole program at once; interpreter translates line by line', subjects: ['compiler', 'interpreter'], wrong: ['line', 'program', 'code'] },
+    // Exam technique (any topic)
+    { id: 'E1', topics: [], exam: true, text: 'Explain = make a point AND say why (because / so / therefore)' },
+    { id: 'E2', topics: [], exam: true, text: 'Use precise technical vocabulary' },
+    { id: 'E3', topics: [], exam: true, text: 'Read the question and command word – answer what is asked' },
+    { id: 'E4', topics: [], exam: true, text: 'Always attempt every question – a blank cannot score' },
+    { id: 'E5', topics: [], exam: true, text: 'Show your working in calculations' },
+    { id: 'E6', topics: [], exam: true, text: 'Give one clear answer – giving two answers (one wrong) loses the mark' }
+  ];
+
   var list = [];      // every node: {code, title, level, parent}
   var byCode = {};
   function add(code, title, level, parent) {
@@ -261,7 +301,19 @@ var J277 = (function () {
     return COMMAND_WORDS.some(function (c) { return c.toLowerCase() === String(w || '').trim().toLowerCase(); });
   }
 
+  function feedbackCode(id) {
+    return FEEDBACK_CODES.filter(function (c) { return c.id === String(id || '').trim().toUpperCase(); })[0] || null;
+  }
+  function codesForTopic(code) {
+    var n = normaliseCode(code);
+    var p = point(n);
+    return FEEDBACK_CODES.filter(function (c) {
+      return c.topics.some(function (t) { return t === n || (p && t === p.code) || n.indexOf(t) === 0; });
+    });
+  }
+
   return {
+    FEEDBACK_CODES: FEEDBACK_CODES, feedbackCode: feedbackCode, codesForTopic: codesForTopic,
     list: list, get: get, isValid: isValid, children: children, subTopics: subTopics, specPoints: specPoints,
     area: area, point: point, label: label, expand: expand, normaliseCode: normaliseCode,
     COMMAND_WORDS: COMMAND_WORDS, MIXUPS: MIXUPS, mixupsFor: mixupsFor, isCommandWord: isCommandWord
