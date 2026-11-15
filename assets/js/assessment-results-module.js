@@ -242,6 +242,9 @@ async function refreshAssessmentResultsData(className) {
   var classSnap = await state.db.ref('classes/' + className + '/codes').get();
   var classCodes = classSnap.exists() ? Object.keys(classSnap.val() || {}) : [];
   apResultsState.progressRows = {};
+  // Paper tests (GCSE mocks) are defined in Firebase, not in ASSESSMENTS – register them
+  // so they appear here like any AP. Canonical (staff-only) results replace the student copy.
+  var paper = (typeof gcseLoadPaperTestsForClass === 'function') ? await gcseLoadPaperTestsForClass(className) : { results: {} };
   await Promise.all(classCodes.map(async function(code) {
     var snap = await state.db.ref('progress/' + code + '/assessments').get();
     var assessments = {};
@@ -249,19 +252,35 @@ async function refreshAssessmentResultsData(className) {
       snap.forEach(function(child) {
         var r = child.val() || {};
         if (!r.completedAt) return;
-        assessments[child.key] = {
+        var rec = {
           completedAt: r.completedAt,
           score: r.score,
           maxScore: r.maxScore,
           rubric: r.rubric || [],
           lobbyCode: r.lobbyCode,
           className: r.className,
+          type: r.type,
+          title: r.title,
+          dp: r.dp,
           manualOverride: r.manualOverride,
           manualOverrideAt: r.manualOverrideAt,
           manualOverrideReason: r.manualOverrideReason
         };
+        // Legacy assessment ids (e.g. the old Year 9 Binary & Hex id) are merged into the current one.
+        var id = child.key;
+        var legacyOf = ASSESSMENTS[id] && ASSESSMENTS[id].legacyOf;
+        if (legacyOf) {
+          if (assessments[legacyOf] && (assessments[legacyOf].completedAt || 0) >= rec.completedAt) return;
+          id = legacyOf;
+        }
+        if (assessments[id] && !legacyOf && (assessments[id].completedAt || 0) > rec.completedAt) return;
+        assessments[id] = rec;
       });
     }
+    Object.keys(paper.results || {}).forEach(function(testId) {
+      var canonical = paper.results[testId] && paper.results[testId][code];
+      if (canonical) assessments[testId] = canonical;
+    });
     apResultsState.progressRows[code] = { assessments: assessments };
   }));
 
@@ -273,13 +292,26 @@ async function refreshAssessmentResultsData(className) {
 function populateAssessmentResultsFilters() {
   var assessmentEl = document.getElementById('ap-results-assessment');
   assessmentEl.innerHTML = '<option value="all">All assessments</option>';
-  Object.keys(ASSESSMENTS).forEach(function(id) {
+  // Only list assessments this class actually has results for (no legacy duplicates).
+  var withResults = {};
+  Object.keys(apResultsState.progressRows || {}).forEach(function(code) {
+    var a = (apResultsState.progressRows[code] || {}).assessments || {};
+    Object.keys(a).forEach(function(id) { if (a[id] && a[id].completedAt) withResults[id] = a[id].title || withResults[id] || true; });
+  });
+  var ids = Object.keys(withResults).filter(function(id) { return !(ASSESSMENTS[id] && ASSESSMENTS[id].legacyOf); });
+  ids.sort(function(a, b) {
+    var ta = (ASSESSMENTS[a] && ASSESSMENTS[a].title) || withResults[a] || a;
+    var tb = (ASSESSMENTS[b] && ASSESSMENTS[b].title) || withResults[b] || b;
+    return String(ta).localeCompare(String(tb));
+  });
+  ids.forEach(function(id) {
     var opt = document.createElement('option');
     opt.value = id;
-    opt.textContent = ASSESSMENTS[id].title || id;
+    opt.textContent = (ASSESSMENTS[id] && ASSESSMENTS[id].title) || (typeof withResults[id] === 'string' ? withResults[id] : id);
     assessmentEl.appendChild(opt);
   });
-  if (Object.keys(ASSESSMENTS).length === 1) assessmentEl.value = Object.keys(ASSESSMENTS)[0];
+  if (!ids.length) assessmentEl.innerHTML = '<option value="all">No AP results for this class yet</option>';
+  if (ids.length === 1) assessmentEl.value = ids[0];
 
   var studentEl = document.getElementById('ap-results-student');
   studentEl.innerHTML = '';
@@ -435,7 +467,9 @@ function assessmentRow(code, assessmentId, rec) {
     code: code,
     name: studentName(code) || '',
     assessmentId: assessmentId,
-    assessmentTitle: (ASSESSMENTS[assessmentId] && ASSESSMENTS[assessmentId].title) || assessmentId,
+    assessmentTitle: (ASSESSMENTS[assessmentId] && ASSESSMENTS[assessmentId].title) || (rec && rec.title) || assessmentId,
+    type: rec && rec.type,
+    dp: rec && rec.dp,
     score: rec ? (rec.score || 0) : 0,
     maxScore: maxScore,
     completedAt: rec && rec.completedAt,
@@ -498,9 +532,9 @@ function renderClassAssessmentResults(content, rows) {
     '<th class="border border-gray-200 px-2 py-1.5">Name</th><th class="border border-gray-200 px-2 py-1.5 text-center">Score</th><th class="border border-gray-200 px-2 py-1.5 text-center">Definite Purpose</th><th class="border border-gray-200 px-2 py-1.5 text-center">Actions</th></tr></thead><tbody>';
   sorted.forEach(function(r, i) {
     html += '<tr class="border-b border-gray-100' + (!r.completed ? ' opacity-50' : '') + '">' +
-      '<td class="border border-gray-100 px-2 py-1.5 font-medium">' + escapeHtml(r.name || '-') + '</td>' +
+      '<td class="border border-gray-100 px-2 py-1.5 font-medium"><button type="button" class="gcse-profile-link hover:underline text-left" data-code="' + escapeHtml(r.code) + '" title="Open student profile">' + escapeHtml(r.name || r.code || '-') + '</button></td>' +
       '<td class="border border-gray-100 px-2 py-1.5 text-center font-semibold">' + r.score + ' / ' + r.maxScore + '</td>' +
-      '<td class="border border-gray-100 px-2 py-1.5 text-center font-bold text-blue-700">' + (r.completed ? scoreGradeMap[r.score] : '—') + '</td>' +
+      '<td class="border border-gray-100 px-2 py-1.5 text-center font-bold text-blue-700">' + (r.completed ? (r.type === 'paper' && r.dp ? r.dp : scoreGradeMap[r.score]) : '—') + '</td>' +
       '<td class="border border-gray-100 px-2 py-1.5 text-center">' +
         '<div class="flex justify-center gap-1">' +
         (r.completed ? '<button class="btn-ap-result-edit px-2 py-1 rounded border border-yellow-500 text-yellow-700 bg-yellow-50" data-code="' + escapeHtml(r.code) + '" data-assessment="' + escapeHtml(r.assessmentId) + '">Edit</button>' : '') +

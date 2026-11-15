@@ -32,6 +32,10 @@
       ".write": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())"
     },
 
+    "gcse": {
+      ".read": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())",
+      ".write": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())"
+    },
     "classes": {
       ".read": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())",
       ".write": "auth != null && ((auth.token.firebase.sign_in_provider === 'google.com' && root.child('admins').child(auth.uid).val() === true) || root.child('teacherSessions').child(auth.uid).exists())",

@@ -3126,6 +3126,16 @@ function renderStudentQuestion(qIdx, questionStart, duration) {
     var textInput = document.getElementById('qs-text-input');
     textInput.value = '';
     textInput.disabled = false;
+    // GCSE written answers need a normal sentence box, not the big code-style input.
+    var gcseText = !!q.gcseRules;
+    textInput.classList.toggle('text-2xl', !gcseText);
+    textInput.classList.toggle('font-mono', !gcseText);
+    textInput.classList.toggle('tracking-widest', !gcseText);
+    textInput.classList.toggle('text-center', !gcseText);
+    textInput.classList.toggle('text-lg', gcseText);
+    textInput.placeholder = gcseText ? 'Write your answer in a sentence…' : 'Type your answer…';
+    document.getElementById('qs-text-answer').classList.toggle('max-w-xs', !gcseText);
+    document.getElementById('qs-text-answer').classList.toggle('max-w-2xl', gcseText);
     document.getElementById('qs-text-feedback').textContent = '';
     document.getElementById('btn-quiz-submit-text').disabled = false;
     document.getElementById('btn-quiz-submit-text').onclick = function() { submitStudentTextAnswer(qIdx); };

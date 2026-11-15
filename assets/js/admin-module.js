@@ -31,6 +31,7 @@ function setAdminTab(tab) {
   var teachersTab = tab === 'teachers';
   var debugTab = tab === 'debug';
   var accessTab = tab === 'access';
+  var gcseTab = tab === 'gcse';
   var activeCls = 'admin-tab px-3 py-2 text-sm font-semibold border-b-2 border-[rgb(176,28,35)] text-[rgb(176,28,35)]';
   var idleCls = 'admin-tab px-3 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-800';
   document.getElementById('admin-classes-tab').classList.toggle('hidden', !classesTab);
@@ -41,10 +42,12 @@ function setAdminTab(tab) {
   document.getElementById('admin-teachers-tab').classList.toggle('hidden', !teachersTab);
   document.getElementById('admin-debug-tab').classList.toggle('hidden', !debugTab);
   document.getElementById('admin-access-tab').classList.toggle('hidden', !accessTab);
+  var gcsePanel = document.getElementById('admin-gcse-tab');
+  if (gcsePanel) gcsePanel.classList.toggle('hidden', !gcseTab);
   [['admin-tab-classes',classesTab],['admin-tab-quiz-results',quizResultsTab],
    ['admin-tab-ap-results',apResultsTab],['admin-tab-force-ap',forceApTab],
    ['admin-tab-classroom',classroomTab],['admin-tab-teachers',teachersTab],['admin-tab-debug',debugTab],
-   ['admin-tab-access',accessTab]
+   ['admin-tab-access',accessTab],['admin-tab-gcse',gcseTab]
   ].forEach(function(pair) {
     var el = document.getElementById(pair[0]);
     if (!el) return;
@@ -58,6 +61,7 @@ function setAdminTab(tab) {
   if (forceApTab) loadForceApTab();
   if (classroomTab) loadClassroomManagementTab();
   if (accessTab) loadAccessTab();
+  if (gcseTab && typeof gcseOpenTab === 'function') gcseOpenTab();
 }
 
 document.getElementById('admin-tab-classes').onclick = function() { setAdminTab('classes'); };
@@ -68,6 +72,7 @@ document.getElementById('admin-tab-classroom').onclick = function() { setAdminTa
 document.getElementById('admin-tab-teachers').onclick = function() { setAdminTab('teachers'); };
 document.getElementById('admin-tab-debug').onclick = function() { setAdminTab('debug'); };
 document.getElementById('admin-tab-access').onclick = function() { setAdminTab('access'); };
+document.getElementById('admin-tab-gcse').onclick = function() { setAdminTab('gcse'); };
 document.getElementById('btn-classroom-sync-names').onclick = function() {
   startClassroomNameSync({ silent: false, force: true, showStatus: true });
 };
@@ -252,7 +257,7 @@ function applyAdminPermissions() {
   if (state.isAdmin) {
     // Full admin — restore everything
     ['admin-tab-classes','admin-tab-quiz-results','admin-tab-ap-results','admin-tab-force-ap',
-     'admin-tab-classroom','admin-tab-access','admin-tab-teachers','admin-tab-debug',
+     'admin-tab-gcse','admin-tab-classroom','admin-tab-access','admin-tab-teachers','admin-tab-debug',
      'admin-gen-row','admin-add-row'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.classList.remove('hidden');
@@ -267,6 +272,7 @@ function applyAdminPermissions() {
     'admin-tab-quiz-results': canDo('viewQuizResults'),
     'admin-tab-ap-results':   canDo('viewAP'),
     'admin-tab-force-ap':     canDo('forceAP'),
+    'admin-tab-gcse':         canDo('viewAP'),
     'admin-tab-classroom':    canDo('manageClasses'),
     'admin-tab-access':       canDo('viewProgress') || canDo('viewClasses'),
     'admin-tab-teachers':     canDo('manageTeachers'),
@@ -3573,7 +3579,7 @@ async function openStudentApFeedback() {
       var when = rec.completedAt ? ' - ' + new Date(rec.completedAt).toLocaleString('en-GB') : '';
       var feedback = releasedFeedbackForAssessmentAttempt(feedbacks, rec);
       var status = feedback ? '' : ' - feedback not released yet';
-      html += '<option value="' + idx + '">' + escapeHtml(((ASSESSMENTS[id] && ASSESSMENTS[id].title) || id) + when + status) + '</option>';
+      html += '<option value="' + idx + '">' + escapeHtml(((ASSESSMENTS[id] && ASSESSMENTS[id].title) || rec.title || id) + when + status) + '</option>';
     });
     html += '</select></div></div><div id="student-ap-feedback-body"></div>';
     content.innerHTML = html;
@@ -3584,7 +3590,9 @@ async function openStudentApFeedback() {
       var body = document.getElementById('student-ap-feedback-body');
       var feedback = releasedFeedbackForAssessmentAttempt(feedbacks, rec);
       if (!feedback) {
-        body.innerHTML = '<div class="border border-gray-200 rounded-lg p-4"><h3 class="text-lg font-bold mb-2">' + escapeHtml((ASSESSMENTS[id] && ASSESSMENTS[id].title) || id) + '</h3><p class="text-sm text-gray-600 mb-3">Completed: ' + (rec.completedAt ? new Date(rec.completedAt).toLocaleString('en-GB') : '-') + '</p><p class="text-gray-500">Your teacher has not released whole class feedback for this AP yet.</p></div>';
+        body.innerHTML = '<div class="border border-gray-200 rounded-lg p-4"><h3 class="text-lg font-bold mb-2">' + escapeHtml((ASSESSMENTS[id] && ASSESSMENTS[id].title) || rec.title || id) + '</h3><p class="text-sm text-gray-600 mb-3">Completed: ' + (rec.completedAt ? new Date(rec.completedAt).toLocaleString('en-GB') : '-') + '</p><p class="text-gray-500">Your teacher has not released whole class feedback for this AP yet.</p></div>';
+      } else if (rec.type === 'paper' && typeof gcseRenderStudentPaperFeedback === 'function') {
+        gcseRenderStudentPaperFeedback(body, feedback, rec);
       } else {
         renderReleasedAssessmentFeedback(body, feedback, rec);
       }
@@ -3663,19 +3671,23 @@ async function loadForceApTab() {
     classEl.innerHTML = '<option value="">Error loading classes</option>';
   }
 
-  // Populate assessment dropdown from ASSESSMENTS
-  assessEl.innerHTML = '';
-  if (typeof ASSESSMENTS !== 'undefined') {
-    Object.keys(ASSESSMENTS).forEach(function(id) {
+  // Populate assessment dropdown – only APs for this class's year group (unless "Show all").
+  var showAllEl = document.getElementById('force-ap-show-all');
+  function fillAssessments() {
+    var ids = forceApAssessmentIdsForClass(classEl.value, showAllEl && showAllEl.checked);
+    assessEl.innerHTML = ids.length ? '' : '<option value="">No APs for this year group – tick "Show all"</option>';
+    ids.forEach(function(id) {
       var o = document.createElement('option');
       o.value = id;
       o.textContent = (ASSESSMENTS[id].title || id);
       assessEl.appendChild(o);
     });
   }
+  fillAssessments();
+  if (showAllEl) showAllEl.onchange = fillAssessments;
 
   // Load students for the selected class
-  classEl.onchange = function() { loadForceApStudents(classEl.value); };
+  classEl.onchange = function() { fillAssessments(); loadForceApStudents(classEl.value); };
   if (classEl.value) loadForceApStudents(classEl.value);
 
   document.getElementById('btn-force-ap-assign').onclick = function() {
@@ -3683,6 +3695,25 @@ async function loadForceApTab() {
   };
 
   loadActiveForcedAps();
+}
+
+// "7w-ct1 - 2026 2027" → 7. Null when the class name has no year number.
+function classYearGroup(className) {
+  var m = String(className || '').match(/^\s*(\d{1,2})/);
+  return m ? Number(m[1]) : null;
+}
+
+// Runnable APs for a class: real (non-legacy, non-paper) APs whose id/title names the class's year.
+function forceApAssessmentIdsForClass(className, showAll) {
+  if (typeof ASSESSMENTS === 'undefined') return [];
+  var year = classYearGroup(className);
+  return Object.keys(ASSESSMENTS).filter(function(id) {
+    var a = ASSESSMENTS[id] || {};
+    if (a.legacyOf || a.hidden || a.type === 'paper') return false;
+    if (showAll || year == null) return true;
+    var m = (id + ' ' + (a.title || '')).match(/year\s*-?(\d{1,2})/i);
+    return !m || Number(m[1]) === year;
+  });
 }
 
 async function loadForceApStudents(className) {

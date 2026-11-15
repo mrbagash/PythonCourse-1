@@ -189,13 +189,28 @@ async function submitStudentTextAnswer(qIdx) {
     return;
   }
   var correct = typed === expected;
+  var answerText = typed;
+  var gcseResult = null;
+  // GCSE short-answer questions: mark with the keyword marker (checks what is said about what).
+  if (q.gcseRules && typeof GcseCore !== 'undefined') {
+    answerText = textInput.value.trim();
+    gcseResult = GcseCore.mark(q.gcseRules, answerText, q.gcseMarks || 1);
+    correct = gcseResult.marks >= gcseResult.max;
+  }
   quiz.myAnswered = true;
   lockStudentAnswers();
-  await quiz.sessionRef.child('answers/' + qIdx + '/' + state.uid).set({
-    answerText: typed,
+  var answerRecord = {
+    answerText: answerText,
     correct: correct,
     answeredAt: Date.now(),
-  });
+  };
+  if (gcseResult) {
+    answerRecord.gcseMarks = gcseResult.marks;
+    answerRecord.gcseMax = gcseResult.max;
+    answerRecord.needsCheck = !!gcseResult.needsCheck;
+    if (typeof gcseRecordQuizAttempt === 'function') gcseRecordQuizAttempt(q, answerText, gcseResult, 'live');
+  }
+  await quiz.sessionRef.child('answers/' + qIdx + '/' + state.uid).set(answerRecord);
   document.getElementById('qs-answered-msg').classList.remove('hidden');
   document.getElementById('qs-text-answer').classList.add('hidden');
 }
