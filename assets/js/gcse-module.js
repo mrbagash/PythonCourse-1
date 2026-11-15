@@ -671,7 +671,7 @@ async function gcseRenderTestView(box, seq) {
   var h = '<div class="flex items-center gap-3 mb-1"><button type="button" id="gcse-back-list" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
     '<h3 class="text-lg font-bold text-gray-800">' + gEsc(t.title) + '</h3><span class="text-xs text-gray-500">' + gcseTestTotal(t) + ' marks · ' + (t.questions || []).length + ' questions</span></div>' +
     '<div class="flex items-center gap-1 border-b border-gray-200 mb-3">' +
-      (hasResults ? (online && typeof gcseMarkRender === 'function' ? tabBtn('mark', 'Mark answers' + (toCheck ? ' <span class="ml-1 px-1.5 rounded-full text-[11px] bg-orange-100 text-orange-800">' + toCheck + '</span>' : ' ✓')) : '') + tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') : tabBtn('marks', 'Add marks')) +
+      (hasResults ? (online && typeof gcseMarkRender === 'function' ? tabBtn('mark', 'Mark answers' + (toCheck ? ' <span class="ml-1 px-1.5 rounded-full text-[11px] bg-orange-100 text-orange-800">' + toCheck + '</span>' : ' ✓')) : '') + tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') + (typeof wcfRenderActions === 'function' && fbInfo && fbInfo.wcf ? tabBtn('actions', 'Actions') : '') : tabBtn('marks', 'Add marks')) +
       menu + '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div><div id="gcse-tab-body">';
   if (tab === 'marks' && t.mode === 'online') {
     h += '<div class="rounded border border-green-200 bg-green-50 p-4 text-sm text-green-900 mb-3"><b>Online test – ready to run.</b> Start it with the class from <b>Classes → Start AP</b>, or give it to absent students with <b>Force AP</b>. Results appear here as students submit.</div>';
@@ -686,7 +686,9 @@ async function gcseRenderTestView(box, seq) {
   } else if (tab === 'grades') {
     h += gcseGradesTabHtml(t, rows);
   } else if (tab === 'feedback') {
-    h += gcseFeedbackTabHtml(t, rows);
+    h += (typeof wcfRender === 'function' ? '<div id="wcf-root"></div><div id="wcf-analysis">' : '<div>') + gcseFeedbackTabHtml(t, rows) + '</div>';
+  } else if (tab === 'actions') {
+    h += '<div id="wcf-actions-root"></div>';
   } else {
     h += gcseReleaseTabHtml(t, rows, fbInfo);
   }
@@ -700,6 +702,8 @@ async function gcseRenderTestView(box, seq) {
   if (gEl('gcse-print-scheme')) gEl('gcse-print-scheme').onclick = function () { gEl('gcse-more-menu').open = false; gcsePrintPaper(t, true); };
   if (hasResults) gcseBindWcf(t, rows);
   if (tab === 'mark') gcseMarkRender(t);
+  if (tab === 'feedback' && typeof wcfRender === 'function') wcfRender(t, rows);
+  if (tab === 'actions' && typeof wcfRenderActions === 'function') wcfRenderActions(t, rows);
 }
 
 function gcseRenderSettings(t) {
@@ -1304,6 +1308,7 @@ async function gcseRelease(t, rows) {
     practice: practice
   };
   var updates = {};
+  if (typeof wcfReleaseUpdates === 'function') { try { await wcfReleaseUpdates(t, rows, updates, feedback); } catch (e) {} }
   updates['classes/' + t.className + '/apFeedback/' + gcse.testId] = feedback;
   var releasedAt = Date.now();
   rows.forEach(function (r) {
@@ -1327,10 +1332,18 @@ function gcseRenderStudentPaperFeedback(body, feedback, rec) {
   var marks = {};
   (rec.rubric || []).forEach(function (c) { marks[c.id] = c.attempted === false ? null : c.awarded; });
   var s = gcseStudentTopicSummary(t, marks);
+  // Grade after feedback tasks: hide grades until this pupil's tasks are done.
+  if (feedback.wcf && feedback.wcf.gradeAfter && feedback.showGrades && !feedback._tasksChecked && typeof wcfTasksLeft === 'function') {
+    body.innerHTML = '<p class="text-gray-400 text-sm">Loading…</p>';
+    wcfTasksLeft(feedback.assessmentId || rec.assessmentId).then(function (n) { feedback._tasksChecked = true; feedback._tasksLeft = n; gcseRenderStudentPaperFeedback(body, feedback, rec); });
+    return;
+  }
+  var gradesOn = !!feedback.showGrades && !feedback._tasksLeft;
   var h = '<div class="border border-gray-200 rounded-lg p-4 space-y-4">' +
+    (feedback._tasksLeft ? '<div class="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">📝 Finish your <b>feedback tasks</b> (' + feedback._tasksLeft + ' left) to see your grade. <button type="button" id="gcse-open-tasks" class="ml-2 jhncc-primary px-3 py-1 rounded text-xs font-semibold">Start</button></div>' : '') +
     '<div><h3 class="text-lg font-bold">' + gEsc(rec.title || feedback.title || 'Test') + '</h3><p class="text-sm text-gray-600">Score: <b>' + rec.score + ' / ' + rec.maxScore + '</b>' +
-    (feedback.showGrades && rec.grade != null ? ' · Working grade: <b>' + GcseCore.gradeLabel(rec.grade) + '</b>' : '') + '</p></div>' +
-    gcseStudentSplitHtml(t.questions, marks, !!feedback.showGrades) +
+    (gradesOn && rec.grade != null ? ' · Working grade: <b>' + GcseCore.gradeLabel(rec.grade) + '</b>' : '') + '</p></div>' +
+    gcseStudentSplitHtml(t.questions, marks, gradesOn) +
     '<div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div class="rounded border border-green-200 bg-green-50 p-3"><div class="font-semibold text-green-800 mb-1">What went well</div><ul class="text-sm list-disc ml-5">' +
     (s.www.length ? s.www.map(function (p) { return '<li>' + gEsc(J277.label(p.code)) + ' (' + p.pct + '%)</li>'; }).join('') : '<li>Keep going – every topic has room to improve.</li>') + '</ul></div>' +
     '<div class="rounded border border-amber-200 bg-amber-50 p-3"><div class="font-semibold text-amber-800 mb-1">Even better if – fix these</div><ul class="text-sm list-disc ml-5">' +
@@ -1341,6 +1354,7 @@ function gcseRenderStudentPaperFeedback(body, feedback, rec) {
     (feedback.reteach && feedback.reteach.length ? '<div class="text-sm text-gray-600"><b>Whole class:</b> we will revisit ' + feedback.reteach.slice(0, 3).map(function (T) { return gEsc(T.label); }).join(', ') + '.</div>' : '') +
     '<div id="gcse-fix-box"></div></div>';
   body.innerHTML = h;
+  if (gEl('gcse-open-tasks')) gEl('gcse-open-tasks').onclick = function () { var m = gEl('modal-student-ap-feedback'); if (m) m.classList.add('hidden'); wcfOpenTasks(); };
   var weak = s.list.filter(function (p) { return p.pct < 100; }).map(function (p) { return p.code; });
   var pool = (feedback.practice || []).filter(function (q) { return (q.topics || []).some(function (tc) { return weak.indexOf(tc) !== -1; }); });
   var box = gEl('gcse-fix-box');

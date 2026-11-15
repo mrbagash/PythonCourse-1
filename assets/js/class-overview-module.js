@@ -38,10 +38,11 @@ async function classOverviewData(className, settings, year) {
   var extra = await Promise.all([
     Promise.all(codes.map(function (c) { return state.db.ref('accessLog/' + c + '/lastSeen').get().then(function (s) { return s.val() || 0; }).catch(function () { return 0; }); })),
     Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/gcseMisconceptions').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); })),
-    isGcse ? state.db.ref('gcse/targets').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }) : Promise.resolve({})
+    isGcse ? state.db.ref('gcse/targets').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }) : Promise.resolve({}),
+    Promise.all(codes.map(function (c) { return state.db.ref('progress/' + c + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }); }))
   ]);
-  var lastSeen = {}, misc = {};
-  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; });
+  var lastSeen = {}, misc = {}, dirt = {};
+  codes.forEach(function (c, i) { lastSeen[c] = extra[0][i]; misc[c] = extra[1][i]; dirt[c] = extra[3][i]; });
   var targetsAll = extra[2];
   var tests = (typeof gcse !== 'undefined' && gcse.tests) || {};
   // Raw GCSE results (for feedback codes) for this year's official paper tests.
@@ -128,6 +129,18 @@ async function classOverviewData(className, settings, year) {
     if (s.trend.arrow === '↓') why.push({ k: 'drop', t: '↓ ' + s.trend.label });
     if (s.missed.length) why.push({ k: 'missed', t: 'Missed ' + s.missed.length + ' assessment' + (s.missed.length === 1 ? '' : 's') });
     if (!s.lastSeen || now - s.lastSeen > TWO_WEEKS) why.push({ k: 'login', t: s.lastSeen ? 'Not logged in for ' + Math.floor((now - s.lastSeen) / 864e5) + ' days' : 'Never logged in' });
+    // Feedback tasks (whole-class feedback): still stuck after the new question / 2-week check, or tasks left undone for a week.
+    var stuck = [], undone = 0;
+    Object.keys(dirt[s.code] || {}).forEach(function (testId) {
+      var fs = dirt[s.code][testId] || {};
+      Object.keys(fs).forEach(function (fid) {
+        var d = fs[fid]; if (!d || typeof d !== 'object') return;
+        if (d.check ? d.check.mark < d.check.max : (d.transfer && d.transfer.mark < d.transfer.max)) stuck.push(d.title || fid);
+        if (!d.doneAt && d.releasedAt && now - d.releasedAt > 7 * 864e5) undone++;
+      });
+    });
+    if (stuck.length) why.push({ k: 'stuck', t: 'Still stuck: ' + stuck.slice(0, 2).join('; ') + (stuck.length > 2 ? ' +' + (stuck.length - 2) : '') });
+    if (undone) why.push({ k: 'tasks', t: undone + ' feedback task' + (undone === 1 ? '' : 's') + ' not done' });
     s.why = why;
   });
 
@@ -322,7 +335,7 @@ function classOverviewDraw(body) {
   // Row: trend chart + needs attention
   var attention = S.filter(function (s) { return s.why.length; }).sort(function (a, b) { return b.why.length - a.why.length || a.name.localeCompare(b.name); });
   var filt = classOverview.attnFilter || 'all';
-  var kinds = [['all', 'All'], ['below', 'Below target'], ['dp', 'Low DP'], ['drop', '↓ Dropping'], ['missed', 'Missed'], ['login', 'Not logged in']].filter(function (k) { return O.isGcse || k[0] !== 'below'; });
+  var kinds = [['all', 'All'], ['below', 'Below target'], ['dp', 'Low DP'], ['drop', '↓ Dropping'], ['missed', 'Missed'], ['login', 'Not logged in'], ['stuck', 'Still stuck'], ['tasks', 'Tasks not done']].filter(function (k) { return O.isGcse || k[0] !== 'below'; });
   var attnShown = attention.filter(function (s) { return filt === 'all' || s.why.some(function (w) { return w.k === filt; }); });
   h += '<div class="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4"><div class="lg:col-span-3 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Class average per assessment</h4>' + coTrendChart(O.official) + '</div>' +
     '<div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-1">Needs attention <span class="text-xs font-normal text-gray-500">(' + attention.length + ')</span></h4>' +
