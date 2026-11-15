@@ -722,9 +722,14 @@
         <div id="classroom-status" class="text-xs text-gray-500 mt-3"></div>
         <div id="classroom-duplicate-fix-summary" class="hidden mt-4 rounded border border-amber-200 bg-white p-3 text-sm text-gray-700"></div>
       </div>
+      <div id="classroom-archive-bar" class="hidden flex flex-wrap items-center gap-2 mb-4 text-sm"></div>
       <div id="classroom-existing-classes" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <p class="text-gray-400 text-sm py-6">Loading imported classes...</p>
       </div>
+      <details id="classroom-archived-section" class="hidden mt-6 border border-gray-200 rounded-lg bg-gray-50">
+        <summary id="classroom-archived-summary" class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-gray-700">Archived classes</summary>
+        <div id="classroom-archived-classes" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 p-4 pt-1"></div>
+      </details>
     </div>
 
     <div id="admin-debug-tab" class="hidden flex-1 min-h-0 overflow-y-auto">

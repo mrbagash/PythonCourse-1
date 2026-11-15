@@ -85,8 +85,8 @@ document.getElementById('btn-build-code-index').onclick = async function() {
     var updates = {};
     var total = 0;
     classesSnap.forEach(function(classSnap) {
-      // Backfill classNames index
-      updates['classNames/' + classSnap.key] = true;
+      // Backfill classNames index (archived classes stay out of lists)
+      if (!classSnap.child('archived').val()) updates['classNames/' + classSnap.key] = true;
       var codesVal = classSnap.child('codes').val() || {};
       Object.keys(codesVal).forEach(function(code) {
         updates['codeIndex/' + code.toLowerCase()] = { className: classSnap.key, storedCode: code };
@@ -1260,7 +1260,10 @@ async function getClassNames() {
   if (!classesSnap.exists()) return [];
   var names = [];
   var backfill = {};
-  classesSnap.forEach(function(child) { names.push(child.key); backfill['classNames/' + child.key] = true; });
+  classesSnap.forEach(function(child) {
+    if (child.child('archived').val()) return; // archived classes stay out of lists
+    names.push(child.key); backfill['classNames/' + child.key] = true;
+  });
   state.db.ref().update(backfill).catch(function(){});
   return names.sort();
 }
@@ -2970,30 +2973,125 @@ async function loadClassroomManagementTab() {
   classroomSetStatus('Loading imported classes...');
   try {
     var snap = await state.db.ref('classes').get();
-    var classes = [];
+    var classes = [], archived = [];
     if (snap.exists()) {
       snap.forEach(function(child) {
         var codes = child.child('codes').val() || {};
-        classes.push({ name: child.key, count: Object.keys(codes).length });
+        var rec = { name: child.key, count: Object.keys(codes).length };
+        (child.child('archived').val() ? archived : classes).push(rec);
       });
     }
+    var byName = function(a, b) { return a.name.localeCompare(b.name); };
+    classes.sort(byName); archived.sort(byName);
+
     if (!classes.length) {
-      container.innerHTML = '<p class="text-gray-400 text-sm py-6">No classes have been imported into the program yet.</p>';
+      container.innerHTML = '<p class="text-gray-400 text-sm py-6">' +
+        (archived.length ? 'All classes are archived.' : 'No classes have been imported into the program yet.') + '</p>';
     } else {
-      container.innerHTML = classes.sort(function(a, b) { return a.name.localeCompare(b.name); }).map(function(cls) {
+      container.innerHTML = classes.map(function(cls) {
         return '<div class="relative border border-gray-200 rounded-lg bg-white p-4 shadow-sm">' +
-          '<button type="button" class="btn-classroom-delete-class absolute top-2 right-2 w-7 h-7 rounded-full border border-red-200 text-red-600 hover:bg-red-50 font-bold leading-none" data-class="' + escapeHtml(cls.name) + '" title="Delete class">x</button>' +
-          '<div class="text-xl font-semibold text-gray-800 mb-3 pr-8">' + escapeHtml(cls.name) + '</div>' +
+          '<div class="absolute top-2 right-2 flex gap-1">' +
+            '<button type="button" class="btn-classroom-archive-class h-7 px-2 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-100 text-xs font-semibold" data-class="' + escapeHtml(cls.name) + '" title="Archive class (keeps codes and progress)">Archive</button>' +
+            '<button type="button" class="btn-classroom-delete-class w-7 h-7 rounded-full border border-red-200 text-red-600 hover:bg-red-50 font-bold leading-none" data-class="' + escapeHtml(cls.name) + '" title="Delete class">x</button>' +
+          '</div>' +
+          '<div class="text-xl font-semibold text-gray-800 mb-3 pr-24">' + escapeHtml(cls.name) + '</div>' +
           '<div class="text-sm text-gray-600">Students: <strong>' + cls.count + '</strong></div>' +
           '</div>';
       }).join('');
       container.querySelectorAll('.btn-classroom-delete-class').forEach(function(btn) {
         btn.onclick = function() { deleteClassroomManagedClass(btn.dataset.class); };
       });
+      container.querySelectorAll('.btn-classroom-archive-class').forEach(function(btn) {
+        btn.onclick = function() { setClassesArchived([btn.dataset.class], true); };
+      });
     }
-    classroomSetStatus(classes.length + ' imported class' + (classes.length !== 1 ? 'es' : '') + ' found.');
+    renderClassroomArchiveBar(classes);
+    renderClassroomArchivedSection(archived);
+    classroomSetStatus(classes.length + ' active class' + (classes.length !== 1 ? 'es' : '') +
+      (archived.length ? ', ' + archived.length + ' archived' : '') + '.');
   } catch(e) {
     classroomSetStatus('Could not load imported classes: ' + e.message, true);
+  }
+}
+
+// ── Archiving ─────────────────────────────────────────────────
+// An archived class keeps its codes, progress and quiz history, and its students
+// can still log in, but it is hidden from every class list and dropdown
+// (it is removed from the classNames index). Importing it again un-archives it.
+
+// "7w-ct1 - 2025 2026" -> { key: "2025-2026", label: "2025 2026", start: 2025 }
+function classroomAcademicYear(className) {
+  var m = String(className || '').match(/(20\d{2})\s*[-–\/ ]?\s*(20\d{2})\s*$/);
+  if (!m) return null;
+  return { key: m[1] + '-' + m[2], label: m[1] + ' ' + m[2], start: Number(m[1]) };
+}
+
+function renderClassroomArchiveBar(activeClasses) {
+  var bar = document.getElementById('classroom-archive-bar');
+  if (!bar) return;
+  var years = {};
+  activeClasses.forEach(function(cls) {
+    var y = classroomAcademicYear(cls.name);
+    if (!y) return;
+    (years[y.key] = years[y.key] || { year: y, names: [] }).names.push(cls.name);
+  });
+  var list = Object.keys(years).map(function(k) { return years[k]; })
+    .sort(function(a, b) { return a.year.start - b.year.start; });
+  var older = list.slice(0, -1); // never offer to bulk-archive the newest year
+  if (!older.length) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML = '<span class="text-gray-600">Older classes:</span>' + older.map(function(g, i) {
+    return '<button type="button" class="btn-classroom-archive-year px-3 py-1.5 rounded border border-gray-300 bg-white hover:bg-gray-100 font-semibold text-gray-700" data-i="' + i + '">' +
+      'Archive all ' + escapeHtml(g.year.label) + ' classes (' + g.names.length + ')</button>';
+  }).join('');
+  bar.querySelectorAll('.btn-classroom-archive-year').forEach(function(btn) {
+    btn.onclick = function() {
+      var g = older[Number(btn.dataset.i)];
+      if (!confirm('Archive all ' + g.names.length + ' classes from ' + g.year.label + '?\n\n' +
+        'They will be hidden from class lists. Codes, progress and quiz history are kept, ' +
+        'students can still log in, and you can unarchive them at any time.')) return;
+      setClassesArchived(g.names, true);
+    };
+  });
+}
+
+function renderClassroomArchivedSection(archivedClasses) {
+  var section = document.getElementById('classroom-archived-section');
+  var grid = document.getElementById('classroom-archived-classes');
+  var summary = document.getElementById('classroom-archived-summary');
+  if (!section || !grid) return;
+  if (!archivedClasses.length) { section.classList.add('hidden'); grid.innerHTML = ''; return; }
+  section.classList.remove('hidden');
+  summary.textContent = 'Archived classes (' + archivedClasses.length + ')';
+  grid.innerHTML = archivedClasses.map(function(cls) {
+    return '<div class="flex items-center justify-between gap-2 border border-gray-200 rounded bg-white px-3 py-2">' +
+      '<div class="min-w-0"><div class="font-semibold text-gray-700 truncate">' + escapeHtml(cls.name) + '</div>' +
+      '<div class="text-xs text-gray-500">Students: ' + cls.count + '</div></div>' +
+      '<button type="button" class="btn-classroom-unarchive-class shrink-0 px-2 py-1 rounded border border-gray-300 text-xs font-semibold text-gray-700 hover:bg-gray-100" data-class="' + escapeHtml(cls.name) + '">Unarchive</button>' +
+      '</div>';
+  }).join('');
+  grid.querySelectorAll('.btn-classroom-unarchive-class').forEach(function(btn) {
+    btn.onclick = function() { setClassesArchived([btn.dataset.class], false); };
+  });
+}
+
+async function setClassesArchived(classNames, archive) {
+  if (!classNames || !classNames.length) return;
+  var updates = {};
+  var now = Date.now();
+  classNames.forEach(function(name) {
+    updates['classes/' + name + '/archived'] = archive ? true : null;
+    updates['classes/' + name + '/archivedAt'] = archive ? now : null;
+    updates['classNames/' + name] = archive ? null : true;
+  });
+  classroomSetStatus((archive ? 'Archiving ' : 'Unarchiving ') + classNames.length + ' class' + (classNames.length === 1 ? '' : 'es') + '...');
+  try {
+    await state.db.ref().update(updates);
+    await loadClassroomManagementTab();
+    classroomSetStatus((archive ? 'Archived ' : 'Unarchived ') + classNames.length + ' class' + (classNames.length === 1 ? '' : 'es') + '.');
+    if (typeof refreshAdminTable === 'function') Promise.resolve(refreshAdminTable()).catch(function() {});
+  } catch(e) {
+    classroomSetStatus('Could not ' + (archive ? 'archive' : 'unarchive') + ': ' + e.message, true);
   }
 }
 
@@ -3292,6 +3390,9 @@ async function importSelectedClassroomClasses() {
       writeClasses[className] = true;
       if (className !== classroomSafeSheetTitle(item.course.name || item.course.id)) duplicateClassesToDelete[classroomSafeSheetTitle(item.course.name || item.course.id)] = true;
       if (item.course.id) firebaseUpdates['classes/' + className + '/classroomCourseId'] = item.course.id;
+      // Importing a class makes it active again if it had been archived.
+      firebaseUpdates['classes/' + className + '/archived'] = null;
+      firebaseUpdates['classes/' + className + '/archivedAt'] = null;
       var rows = classRows[className] || (classRows[className] = []);
       item.students.forEach(function(student) {
         var existingRec = existing.byEmail[student.email];
@@ -3345,6 +3446,7 @@ async function importSelectedClassroomClasses() {
         ungroupedCount++;
       });
       firebaseUpdates['classNames/' + CLASSROOM_UNGROUPED_CLASS] = true;
+      firebaseUpdates['classes/' + CLASSROOM_UNGROUPED_CLASS + '/archived'] = null;
       writeClasses[CLASSROOM_UNGROUPED_CLASS] = true;
     });
 
@@ -3551,6 +3653,7 @@ async function loadForceApTab() {
     classEl.innerHTML = '';
     if (snap.exists()) {
       snap.forEach(function(child) {
+        if (child.child('archived').val()) return;
         var o = document.createElement('option');
         o.value = child.key; o.textContent = child.key;
         classEl.appendChild(o);
