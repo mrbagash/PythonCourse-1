@@ -2321,7 +2321,7 @@ async function gcseLoadProfileData(code) {
   });
   var covered = Object.keys(settings.covered || {}).map(gFromTopicKey);
   return { code: code, className: className, isGcse: isGcse, settings: settings, target: target, access: access, history: history, quiz: prog.gcseQuiz || {},
-    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, steps: steps, ms: ms, covered: covered };
+    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, dirt: prog.dirt || {}, steps: steps, ms: ms, covered: covered };
 }
 
 // Topic scores from official assessments, plus (optionally) live quizzes / practice.
