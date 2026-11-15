@@ -1534,6 +1534,15 @@
 </div>
 
 
+<!-- Class page (Classroom Management → click a class) -->
+<div id="modal-class-page" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-3">
+  <div class="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+    <div class="flex items-center justify-between px-5 py-3 border-b"><h2 id="class-page-title" class="text-lg font-bold text-gray-800">Class</h2>
+      <button id="class-page-close" class="text-gray-400 hover:text-gray-600 text-xl">&#x2715;</button></div>
+    <div id="class-page-tabs" class="flex flex-wrap gap-2 px-5 pt-3"></div>
+    <div id="class-page-body" class="overflow-y-auto p-5"></div>
+  </div>
+</div>
 <!-- GCSE: student profile (teachers/admins only) -->
 <div id="modal-gcse-profile" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-3">
   <div class="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col">
@@ -1563,7 +1572,7 @@
 <script src="assets/js/pyscratch-lesson.js?v=20260706a"></script>
 <script src="assets/js/app-core.js?v=20260706a"></script>
 <script src="assets/js/auth-module.js?v=20260624"></script>
-<script src="assets/js/admin-module.js?v=20261115a"></script>
+<script src="assets/js/admin-module.js?v=20261116a"></script>
 <script src="assets/js/quiz-state.js?v=20260705a"></script>
 <script src="assets/js/assessment-module.js?v=20260624"></script>
 <script src="assets/js/assessment-scratch-module.js?v=20260624"></script>
@@ -1581,6 +1590,7 @@
 <script src="assets/js/j277-topics.js?v=20261115a"></script>
 <script src="assets/js/gcse-core.js?v=20261115b"></script>
 <script src="assets/js/gcse-starter-bank.js?v=20261115b"></script>
-<script src="assets/js/gcse-module.js?v=20261115b"></script>
+<script src="assets/js/class-page-module.js?v=20261116a"></script>
+<script src="assets/js/gcse-module.js?v=20261116a"></script>
 </body>
 </html>

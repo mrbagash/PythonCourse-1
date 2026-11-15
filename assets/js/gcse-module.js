@@ -323,8 +323,10 @@ function gcseSetView(view) {
   if (view === 'review') return gcseRenderReviewView();
 }
 async function gcseClassOptions(selected) {
-  var names = typeof getClassNames === 'function' ? await getClassNames() : [];
-  return '<option value="">— select class —</option>' + names.map(function (n) {
+  // Only GCSE classes (set in Classroom Management → class page → Type).
+  var names = typeof gcseClassNamesOnly === 'function' ? await gcseClassNamesOnly() : (typeof getClassNames === 'function' ? await getClassNames() : []);
+  if (!names.length) return '<option value="">No GCSE classes yet – set a class type in Classroom Management</option>';
+  return '<option value="">— select GCSE class —</option>' + names.map(function (n) {
     return '<option value="' + gEsc(n) + '"' + (n === selected ? ' selected' : '') + '>' + gEsc(n) + '</option>';
   }).join('');
 }
@@ -346,6 +348,7 @@ async function gcseRenderTestsView() {
       '<button type="button" id="gcse-blank-template" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Download blank test spreadsheet</button>' +
       '<button type="button" id="gcse-new-test" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">New test (paste map)</button>' +
       '<button type="button" id="gcse-guide" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Download Topic Codes Guide</button>' +
+      '<button type="button" id="gcse-class-settings" class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm">Class page</button>' +
     '</div><div id="gcse-test-body"></div>';
   gEl('gcse-class').onchange = function () { gcse.className = this.value; gcse.testId = ''; gcseFillTestSelect(); gcseRenderTest(); };
   gEl('gcse-test').onchange = function () { gcse.testId = this.value; gcseRenderTest(); };
@@ -353,6 +356,7 @@ async function gcseRenderTestsView() {
   gEl('gcse-blank-template').onclick = function () { gcseDownloadBlankTemplate(); };
   gEl('gcse-import-whole').onchange = function () { if (this.files[0]) gcseHandleWholeImport(this.files[0]); this.value = ''; };
   gEl('gcse-guide').onclick = function () { gDownload('Topic Codes Guide.txt', gcseTopicCodesGuide('test')); };
+  gEl('gcse-class-settings').onclick = function () { if (gcse.className) openClassPage(gcse.className); else gcseStatus('Choose a class first.', true); };
   gcseFillTestSelect();
   await gcseRenderTest();
 }
@@ -1492,9 +1496,17 @@ async function gcseStartFromHostSetup() {
   };
   if (typeof openQuizSetup === 'function') {
     var originalOpen = openQuizSetup;
-    openQuizSetup = function () {
+    openQuizSetup = function (className) {
       var r = originalOpen.apply(this, arguments);
       setSource(gcse.hostSource || 'lesson');
+      gcseBtn.classList.add('hidden');
+      if (typeof classSettings === 'function') {
+        classSettings(className).then(function (s) {
+          var isGcse = s && s.type === 'gcse';
+          gcseBtn.classList.toggle('hidden', !isGcse);
+          if (!isGcse && gcse.hostSource === 'gcse') setSource('lesson');
+        }).catch(function () {});
+      }
       return r;
     };
   }

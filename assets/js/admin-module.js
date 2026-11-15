@@ -3000,8 +3000,9 @@ async function loadClassroomManagementTab() {
             '<button type="button" class="btn-classroom-archive-class h-7 px-2 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-100 text-xs font-semibold" data-class="' + escapeHtml(cls.name) + '" title="Archive class (keeps codes and progress)">Archive</button>' +
             '<button type="button" class="btn-classroom-delete-class w-7 h-7 rounded-full border border-red-200 text-red-600 hover:bg-red-50 font-bold leading-none" data-class="' + escapeHtml(cls.name) + '" title="Delete class">x</button>' +
           '</div>' +
-          '<div class="text-xl font-semibold text-gray-800 mb-3 pr-24">' + escapeHtml(cls.name) + '</div>' +
-          '<div class="text-sm text-gray-600">Students: <strong>' + cls.count + '</strong></div>' +
+          '<button type="button" class="class-page-link block text-left text-xl font-semibold text-gray-800 mb-3 pr-24 hover:underline" data-class="' + escapeHtml(cls.name) + '" title="Open class page">' + escapeHtml(cls.name) + '</button>' +
+          '<div class="flex items-center justify-between gap-2"><div class="text-sm text-gray-600">Students: <strong>' + cls.count + '</strong></div>' +
+          '<span class="class-type-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500" data-class="' + escapeHtml(cls.name) + '">…</span></div>' +
           '</div>';
       }).join('');
       container.querySelectorAll('.btn-classroom-delete-class').forEach(function(btn) {
@@ -3011,6 +3012,7 @@ async function loadClassroomManagementTab() {
         btn.onclick = function() { setClassesArchived([btn.dataset.class], true); };
       });
     }
+    if (typeof classPageFillTypeBadges === 'function') classPageFillTypeBadges();
     renderClassroomArchiveBar(classes);
     renderClassroomArchivedSection(archived);
     classroomSetStatus(classes.length + ' active class' + (classes.length !== 1 ? 'es' : '') +
