@@ -1,4 +1,53 @@
-var apResultsState = { className: null, rows: [], students: [], progressRows: {} };
+var apResultsState = { className: null, rows: [], students: [], progressRows: {}, flags: {}, year: null, showArchived: false };
+
+// Year + archived filters (academic year starts 1 Sept; archived = hidden for this class, never deleted).
+function apResultInView(id, rec) {
+  if (!rec || !rec.completedAt) return false;
+  if (!apResultsState.showArchived && typeof assessmentIsArchived === 'function' && assessmentIsArchived(id, apResultsState.flags)) return false;
+  if (apResultsState.year !== 'all' && apResultsState.year != null && typeof academicYearStart === 'function' && academicYearStart(rec.completedAt) !== Number(apResultsState.year)) return false;
+  return true;
+}
+function populateApResultsYears() {
+  var el = document.getElementById('ap-results-year');
+  if (!el || typeof academicYearStart !== 'function') return;
+  var years = {}; years[currentAcademicYear()] = true;
+  Object.keys(apResultsState.progressRows || {}).forEach(function(code) {
+    var a = (apResultsState.progressRows[code] || {}).assessments || {};
+    Object.keys(a).forEach(function(id) { if (a[id] && a[id].completedAt) years[academicYearStart(a[id].completedAt)] = true; });
+  });
+  if (apResultsState.year == null) apResultsState.year = currentAcademicYear();
+  el.innerHTML = Object.keys(years).map(Number).sort(function(a, b) { return b - a; }).map(function(y) {
+    return '<option value="' + y + '">' + academicYearLabel(y) + (y === currentAcademicYear() ? ' (this year)' : '') + '</option>';
+  }).join('') + '<option value="all">All years</option>';
+  el.value = String(apResultsState.year);
+}
+function updateApResultsHiddenNote() {
+  var note = document.getElementById('ap-results-hidden-note');
+  if (!note) return;
+  var older = 0, archived = 0;
+  Object.keys(apResultsState.progressRows || {}).forEach(function(code) {
+    var a = (apResultsState.progressRows[code] || {}).assessments || {};
+    Object.keys(a).forEach(function(id) {
+      var rec = a[id];
+      if (!rec || !rec.completedAt) return;
+      var isArch = typeof assessmentIsArchived === 'function' && assessmentIsArchived(id, apResultsState.flags);
+      if (isArch && !apResultsState.showArchived) { archived++; return; }
+      if (apResultsState.year !== 'all' && academicYearStart(rec.completedAt) !== Number(apResultsState.year)) older++;
+    });
+  });
+  var parts = [];
+  if (older) parts.push(older + ' result' + (older === 1 ? '' : 's') + ' from other years hidden – change Year to see them');
+  if (archived) parts.push(archived + ' archived result' + (archived === 1 ? '' : 's') + ' hidden');
+  note.textContent = parts.join(' · ');
+}
+document.getElementById('ap-results-year').onchange = function() {
+  apResultsState.year = this.value === 'all' ? 'all' : Number(this.value);
+  populateAssessmentResultsFilters(); renderAssessmentResultsPanel();
+};
+document.getElementById('ap-results-show-archived').onchange = function() {
+  apResultsState.showArchived = this.checked;
+  populateAssessmentResultsFilters(); renderAssessmentResultsPanel();
+};
 
 document.getElementById('ap-results-class').onchange = function() {
   var cls = this.value;
@@ -245,6 +294,7 @@ async function refreshAssessmentResultsData(className) {
   // Paper tests (GCSE mocks) are defined in Firebase, not in ASSESSMENTS – register them
   // so they appear here like any AP. Canonical (staff-only) results replace the student copy.
   var paper = (typeof gcseLoadPaperTestsForClass === 'function') ? await gcseLoadPaperTestsForClass(className) : { results: {} };
+  apResultsState.flags = (typeof loadAssessmentFlags === 'function') ? await loadAssessmentFlags(className) : {};
   await Promise.all(classCodes.map(async function(code) {
     var snap = await state.db.ref('progress/' + code + '/assessments').get();
     var assessments = {};
@@ -293,11 +343,13 @@ function populateAssessmentResultsFilters() {
   var assessmentEl = document.getElementById('ap-results-assessment');
   assessmentEl.innerHTML = '<option value="all">All assessments</option>';
   // Only list assessments this class actually has results for (no legacy duplicates).
+  populateApResultsYears();
   var withResults = {};
   Object.keys(apResultsState.progressRows || {}).forEach(function(code) {
     var a = (apResultsState.progressRows[code] || {}).assessments || {};
-    Object.keys(a).forEach(function(id) { if (a[id] && a[id].completedAt) withResults[id] = a[id].title || withResults[id] || true; });
+    Object.keys(a).forEach(function(id) { if (apResultInView(id, a[id])) withResults[id] = a[id].title || withResults[id] || true; });
   });
+  updateApResultsHiddenNote();
   var ids = Object.keys(withResults).filter(function(id) { return !(ASSESSMENTS[id] && ASSESSMENTS[id].legacyOf); });
   ids.sort(function(a, b) {
     var ta = (ASSESSMENTS[a] && ASSESSMENTS[a].title) || withResults[a] || a;
@@ -307,10 +359,12 @@ function populateAssessmentResultsFilters() {
   ids.forEach(function(id) {
     var opt = document.createElement('option');
     opt.value = id;
-    opt.textContent = (ASSESSMENTS[id] && ASSESSMENTS[id].title) || (typeof withResults[id] === 'string' ? withResults[id] : id);
+    opt.textContent = ((ASSESSMENTS[id] && ASSESSMENTS[id].title) || (typeof withResults[id] === 'string' ? withResults[id] : id)) +
+      (typeof assessmentIsPractice === 'function' && assessmentIsPractice(id, apResultsState.flags) ? ' (practice)' : '') +
+      (typeof assessmentIsArchived === 'function' && assessmentIsArchived(id, apResultsState.flags) ? ' (archived)' : '');
     assessmentEl.appendChild(opt);
   });
-  if (!ids.length) assessmentEl.innerHTML = '<option value="all">No AP results for this class yet</option>';
+  if (!ids.length) assessmentEl.innerHTML = '<option value="all">No AP results for this class in this year</option>';
   if (ids.length === 1) assessmentEl.value = ids[0];
 
   var studentEl = document.getElementById('ap-results-student');
@@ -447,10 +501,12 @@ function assessmentRowsForClass(className, assessmentId) {
     if (assessmentId === 'all') {
       Object.keys(assessments).forEach(function(aid) {
         var rec = assessments[aid] || {};
+        if (!apResultInView(aid, rec)) return;
         if (rec.className === className || apResultsState.students.indexOf(code) !== -1) rows.push(assessmentRow(code, aid, rec));
       });
     } else {
-      rows.push(assessmentRow(code, assessmentId, assessments[assessmentId]));
+      var one = assessments[assessmentId];
+      rows.push(assessmentRow(code, assessmentId, apResultInView(assessmentId, one) ? one : null));
     }
   });
   return rows;

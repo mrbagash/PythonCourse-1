@@ -9,6 +9,28 @@
  * GCSE features only list classes whose type is 'gcse'.
  */
 var CLASS_TYPES = { gcse: 'GCSE', btec: 'BTEC', ks3: 'KS3' };
+
+// ── Academic years + per-class assessment flags (shared by AP Results, Class page, profiles) ──
+// Academic year starts 1 September: Sept 2026 – Aug 2027 = 2026 ("2026/27").
+function academicYearStart(ts) { var d = new Date(ts || Date.now()); return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
+function academicYearLabel(start) { return start + '/' + String((Number(start) + 1) % 100).padStart(2, '0'); }
+function currentAcademicYear() { return academicYearStart(Date.now()); }
+function assessmentFlagKey(id) { return String(id || '').replace(/[.#$/\[\]]/g, '-'); }
+// classes/{class}/assessmentFlags/{id}: { archived, practice, official, at }
+async function loadAssessmentFlags(className) {
+  if (!className) return {};
+  try { var snap = await state.db.ref('classes/' + className + '/assessmentFlags').get(); return snap.exists() ? (snap.val() || {}) : {}; }
+  catch (e) { return {}; }
+}
+function assessmentIsArchived(id, flags) { var f = flags && flags[assessmentFlagKey(id)]; return !!(f && f.archived); }
+// Practice unless marked official: flagged practice, or "practice" in the AP's id/title.
+function assessmentIsPractice(id, flags) {
+  var f = flags && flags[assessmentFlagKey(id)];
+  if (f && f.official) return false;
+  if (f && f.practice) return true;
+  var a = typeof ASSESSMENTS !== 'undefined' ? ASSESSMENTS[id] : null;
+  return /practice/i.test(String(id) + ' ' + ((a && a.title) || ''));
+}
 var classPage = { className: '', tab: 'settings', cache: {} };
 
 function cpEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
