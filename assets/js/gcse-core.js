@@ -408,32 +408,21 @@ var GcseCore = (function () {
   // scaled to the test's total. 9:136 8:126 7:117 6:102 5:87 4:72 3:52 2:32 1:13
   var DEFAULT_BOUNDARY_SOURCE = { max: 160, label: 'OCR J277 June 2024', marks: { 9: 136, 8: 126, 7: 117, 6: 102, 5: 87, 4: 72, 3: 52, 2: 32, 1: 13 } };
   function defaultBoundaries(total) {
-    total = Number(total);
-    if (!(total > 0)) return null;
-    var out = {}, prev = Infinity;
-    for (var g = 9; g >= 1; g--) {
-      var m = Math.round(DEFAULT_BOUNDARY_SOURCE.marks[g] / DEFAULT_BOUNDARY_SOURCE.max * total);
-      if (m >= prev) m = prev - 1;           // keep every grade reachable on short tests
-      out[g] = Math.max(m, 0);
-      prev = out[g];
-    }
-    return out;
+    return scaleBoundaries(DEFAULT_BOUNDARY_SOURCE, total);
   }
   // Component (paper) boundaries, OCR J277 June 2024, each out of 80.
   var COMPONENT_BOUNDARY_SOURCE = {
     '1': { max: 80, label: 'Paper 1 (J277/01 Computer systems)', marks: { 9: 65, 8: 61, 7: 58, 6: 51, 5: 44, 4: 38, 3: 27, 2: 17, 1: 7 } },
     '2': { max: 80, label: 'Paper 2 (J277/02 Computational thinking, algorithms and programming)', marks: { 9: 71, 8: 65, 7: 59, 6: 51, 5: 43, 4: 34, 3: 25, 2: 15, 1: 6 } }
   };
+  // Each boundary = the minimum whole mark that reaches OCR's percentage for that grade.
+  // Exact for any total (160 marks gives OCR's own boundaries); on short tests some grades
+  // may share a mark, which is better than inventing differences that are not there.
   function scaleBoundaries(src, total) {
     total = Number(total);
     if (!(total > 0)) return null;
-    var out = {}, prev = Infinity;
-    for (var g = 9; g >= 1; g--) {
-      var m = Math.round(src.marks[g] / src.max * total);
-      if (m >= prev) m = prev - 1;
-      out[g] = Math.max(m, 0);
-      prev = out[g];
-    }
+    var out = {};
+    for (var g = 9; g >= 1; g--) out[g] = Math.max(1, Math.ceil(src.marks[g] / src.max * total - 1e-9));
     return out;
   }
   function componentBoundaries(paper, total) {

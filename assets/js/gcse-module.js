@@ -1424,6 +1424,10 @@ function gcseRecordQuizAttempt(q, answer, result, source) {
       cur = cur || { attempted: 0, correct: 0 };
       cur.attempted = (cur.attempted || 0) + 1;
       if (full) cur.correct = (cur.correct || 0) + 1;
+      cur.src = cur.src || {};
+      var bucket = cur.src[source] || (cur.src[source] = { a: 0, c: 0 });
+      bucket.a = (bucket.a || 0) + 1;
+      if (full) bucket.c = (bucket.c || 0) + 1;
       cur.lastAt = Date.now();
       return cur;
     }, null, false);
@@ -2176,91 +2180,195 @@ async function openGcseProfile(code) {
   gEl('gcse-profile-title').textContent = gName(code) || code;
   var body = gEl('gcse-profile-body');
   body.innerHTML = '<p class="text-gray-400 text-sm">Loading profile…</p>';
+  gcse.profileOpts = gcse.profileOpts || { quizzes: false, practice: false, showHidden: false };
   try {
-    var snaps = await Promise.all([
-      state.db.ref('codeIndex/' + code.toLowerCase()).get(),
-      state.db.ref('progress/' + code).get(),
-      state.db.ref('accessLog/' + code).get(),
-      state.db.ref('gcse/targets/' + code).get().catch(function () { return null; }),
-      gcseLoadTests().catch(function () { return {}; })
-    ]);
-    var idx = snaps[0].val() || {}, prog = snaps[1].val() || {}, access = snaps[2].val() || {};
-    var target = snaps[3] && snaps[3].exists() && snaps[3].val() ? Number(snaps[3].val().grade) : null;
-    var tests = gcse.tests || {};
-    var testIds = Object.keys(tests);
-    var resSnaps = await Promise.all(testIds.map(function (id) { return state.db.ref('gcse/results/' + id + '/' + code).get().catch(function () { return null; }); }));
-    var history = [], topicAgg = {};
-    testIds.forEach(function (id, i) {
-      var s = resSnaps[i]; if (!s || !s.exists()) return;
-      var r = s.val(), t = tests[id];
-      if (r.absent) { history.push({ kind: 'paper', title: t.title, at: r.importedAt || t.createdAt, absent: true }); return; }
-      var grade = GcseCore.gradeFor(r.score, gcseBoundaries(t));
-      history.push({ kind: 'paper', id: id, title: t.title, at: r.importedAt || t.createdAt, score: r.score, max: gcseTestTotal(t), pct: gPct(r.score, gcseTestTotal(t)), grade: grade, dp: r.dp != null ? r.dp : r.dpSuggested, marks: r.marks || {}, test: t });
-      (t.questions || []).forEach(function (q) {
-        var v = r.marks ? r.marks[q.id] : null;
-        (q.topics || []).forEach(function (tc) {
-          var A = topicAgg[tc] || (topicAgg[tc] = { a: 0, p: 0 });
-          A.a += v == null ? 0 : Number(v); A.p += q.marks;
-        });
-      });
-    });
-    var aps = prog.assessments || {};
-    Object.keys(aps).forEach(function (id) {
-      var a = aps[id];
-      if (!a || !a.completedAt || a.type === 'paper') return;
-      history.push({ kind: 'ap', title: (ASSESSMENTS[id] && ASSESSMENTS[id].title) || id, at: a.completedAt, score: a.score, max: a.maxScore, pct: gPct(a.score, a.maxScore) });
-    });
-    var quizStats = prog.gcseQuiz || {};
-    Object.keys(quizStats).forEach(function (k) {
-      var tc = gFromTopicKey(k), s = quizStats[k] || {};
-      var A = topicAgg[tc] || (topicAgg[tc] = { a: 0, p: 0 });
-      A.a += s.correct || 0; A.p += s.attempted || 0;
-    });
-    history.sort(function (a, b) { return a.at - b.at; });
-    var steps = 0, ms = 0;
-    Object.keys(prog).forEach(function (k) {
-      if (['assessments', 'gcseQuiz', 'gcseReview'].indexOf(k) !== -1) return;
-      var lesson = prog[k]; if (!lesson || typeof lesson !== 'object') return;
-      Object.keys(lesson).forEach(function (s) { var st = lesson[s]; if (st && st.completed) steps++; if (st && st.totalMs) ms += st.totalMs; });
-    });
-    var working = gcseWorkingGradeFromHistory(history.filter(function (h) { return h.kind === 'paper' && !h.absent; }));
-    var latestPaper = history.filter(function (h) { return h.kind === 'paper' && !h.absent; }).slice(-1)[0];
-    var weakest = Object.keys(topicAgg).map(function (tc) { return { code: tc, pct: gPct(topicAgg[tc].a, topicAgg[tc].p) }; })
-      .filter(function (x) { return x.pct != null; }).sort(function (a, b) { return a.pct - b.pct; }).slice(0, 5);
-    var card = function (v, l) { return '<div class="rounded-lg border border-gray-200 p-3 text-center"><div class="text-2xl font-bold">' + v + '</div><div class="text-xs text-gray-500">' + l + '</div></div>'; };
-    var gap = working != null && target != null ? working - target : null;
-    var h = '<div class="text-sm text-gray-500 mb-3">' + gEsc(code) + ' · ' + gEsc(idx.className || 'No class') + '</div>' +
-      '<div class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">' + card(GcseCore.gradeLabel(working), 'Working grade') + card(GcseCore.gradeLabel(target), 'Target grade') +
-      card(gap == null ? '–' : (gap >= 0 ? '▲ ' + (gap > 0 ? '+' + gap : '0') : '▼ ' + gap), 'Gap') + card(latestPaper && latestPaper.dp != null ? latestPaper.dp : '–', 'Latest DP (1–4)') +
-      card(access.lastSeen ? new Date(access.lastSeen).toLocaleDateString('en-GB') : '–', 'Last login') + '</div>';
-    var allPaperQs = [], allPaperMarks = {};
-    history.filter(function (x) { return x.kind === 'paper' && !x.absent; }).forEach(function (x) {
-      (x.test.questions || []).forEach(function (q) { var key = x.id + ':' + q.id; allPaperQs.push({ id: key, marks: q.marks, topics: q.topics }); allPaperMarks[key] = x.marks[q.id]; });
-    });
-    if (allPaperQs.length) {
-      h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">Paper 1 vs Paper 2 <span class="text-xs font-normal text-gray-500">(all paper tests combined)</span></h4>' +
-        gcseStudentSplitHtml(allPaperQs, allPaperMarks, true) + '</div>';
-    }
-    h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">Progress over time</h4>' + gcseProfileChart(history) + '</div>';
-    h += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4"><div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold mb-2">Topic map</h4>' + gcseProfileTopicMap(topicAgg) + '</div>' +
-      '<div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold mb-2">Weakest topics now</h4>' + (weakest.length ? '<ol class="text-sm space-y-1">' + weakest.map(function (w) {
-        return '<li><span class="px-1.5 rounded text-xs font-bold" style="' + gRag(w.pct) + '">' + w.pct + '%</span> ' + gEsc(J277.label(w.code)) + '</li>';
-      }).join('') + '</ol>' : '<p class="text-sm text-gray-500">No GCSE data yet.</p>') +
-      '<h4 class="font-bold mt-4 mb-1">Website activity</h4><p class="text-sm">' + steps + ' lesson steps completed · ' + Math.round(ms / 60000) + ' minutes on lessons</p></div></div>';
-    h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">History</h4><table class="w-full text-xs"><tr class="bg-gray-50"><th class="p-1 text-left">Date</th><th class="p-1 text-left">What</th><th class="p-1">Score</th><th class="p-1">Grade</th><th class="p-1">DP</th></tr>' +
-      history.slice().reverse().map(function (x) {
-        return '<tr class="border-t"><td class="p-1">' + (x.at ? new Date(x.at).toLocaleDateString('en-GB') : '') + '</td><td class="p-1">' + gEsc((x.kind === 'paper' ? 'Paper test: ' : 'AP: ') + x.title) + '</td>' +
-          '<td class="p-1 text-center">' + (x.absent ? 'ABS' : (x.score != null ? x.score + ' / ' + x.max : '')) + '</td><td class="p-1 text-center">' + (x.kind === 'paper' && !x.absent ? GcseCore.gradeLabel(x.grade) : '') + '</td><td class="p-1 text-center">' + (x.dp != null ? x.dp : '') + '</td></tr>';
-      }).join('') + '</table></div>';
-    h += '<div class="border border-gray-200 rounded-lg p-3"><div class="flex justify-between items-center mb-2"><h4 class="font-bold">Teacher notes <span class="text-xs font-normal text-gray-500">(saved in your private Google sheet "' + GCSE_NOTES_NAME + '", not Firebase)</span></h4>' +
-      '<button type="button" id="gcse-notes-load" class="text-xs px-2 py-1 rounded border border-gray-300">Load notes</button></div><div id="gcse-notes-list" class="text-sm text-gray-500">Click "Load notes" (needs Google sign-in).</div>' +
-      '<div class="flex gap-2 mt-2"><input id="gcse-note-new" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" placeholder="Add a note…"><button type="button" id="gcse-note-add" class="jhncc-primary px-3 py-1 rounded text-sm">Add</button></div></div>';
-    body.innerHTML = h;
-    gEl('gcse-notes-load').onclick = function () { gcseProfileLoadNotes(code); };
-    gEl('gcse-note-add').onclick = function () { gcseProfileAddNote(code); };
+    gcse.profileData = await gcseLoadProfileData(code);
+    gcseRenderProfile();
   } catch (e) {
     body.innerHTML = '<p class="text-red-600 text-sm">' + gEsc(gDbError(e)) + '</p>';
   }
+}
+
+// Everything a profile needs, loaded once (toggles re-render without reloading).
+async function gcseLoadProfileData(code) {
+  var snaps = await Promise.all([
+    state.db.ref('codeIndex/' + code.toLowerCase()).get(),
+    state.db.ref('progress/' + code).get(),
+    state.db.ref('accessLog/' + code).get(),
+    state.db.ref('gcse/targets/' + code).get().catch(function () { return null; }),
+    gcseLoadTests().catch(function () { return {}; })
+  ]);
+  var idx = snaps[0].val() || {}, prog = snaps[1].val() || {}, access = snaps[2].val() || {};
+  var className = idx.className || '';
+  var settings = {}, flags = {}, classData = null;
+  if (className) {
+    try { settings = await classSettings(className); } catch (e) {}
+    try { flags = await loadAssessmentFlags(className); } catch (e) {}
+    try { classData = await classAssessmentData(className); } catch (e) {}
+  }
+  var target = snaps[3] && snaps[3].exists() && snaps[3].val() ? Number(snaps[3].val().grade) : null;
+  var tests = gcse.tests || {};
+  var testIds = Object.keys(tests);
+  var resSnaps = await Promise.all(testIds.map(function (id) { return state.db.ref('gcse/results/' + id + '/' + code).get().catch(function () { return null; }); }));
+  var isGcse = settings.type === 'gcse';
+  // DP by class ranking (as in AP Results) when no DP is stored.
+  var rankDp = function (id, score) {
+    if (!classData || score == null || typeof definitePurposeGrades !== 'function') return null;
+    var scores = classData.codes.map(function (c) { var r = (classData.recs[c] || {})[id]; return r && !resultNotSubmitted(r) ? Number(r.score) || 0 : null; })
+      .filter(function (v) { return v != null; }).sort(function (x, y) { return y - x; });
+    if (!scores.length) return null;
+    var grades = definitePurposeGrades(scores);
+    var i = scores.indexOf(Number(score));
+    return i === -1 ? null : grades[i];
+  };
+  var history = [];
+  testIds.forEach(function (id, i) {
+    var sn = resSnaps[i]; if (!sn || !sn.exists()) return;
+    var r = sn.val(), t = tests[id];
+    var base = { kind: 'paper', id: id, title: t.title, type: t.kind === 'eou' ? 'End of unit' : t.kind === 'mock' ? 'Mock' : 'GCSE test', at: r.submittedAt || r.importedAt || t.createdAt,
+      practice: assessmentIsPractice(id, flags), archived: assessmentIsArchived(id, flags) };
+    if (r.absent) { history.push(Object.assign(base, { absent: true })); return; }
+    var dp = r.dp != null ? r.dp : (r.dpSuggested != null ? r.dpSuggested : rankDp(id, r.score));
+    history.push(Object.assign(base, { score: r.score, max: gcseTestTotal(t), pct: gPct(r.score, gcseTestTotal(t)), grade: GcseCore.gradeFor(r.score, gcseBoundaries(t)),
+      dp: dp, marks: r.marks || {}, test: t }));
+  });
+  var aps = prog.assessments || {};
+  Object.keys(aps).forEach(function (id) {
+    var a0 = aps[id];
+    if (!a0 || a0.type === 'paper') return;
+    var a = a0;
+    if (a0.attempts) Object.keys(a0.attempts).forEach(function (k) { var x = a0.attempts[k]; if (x && x.completedAt && (!a.completedAt || x.completedAt > a.completedAt)) a = x; });
+    if (!a.completedAt || a.pending || a.type === 'gcse-online') return;
+    var target2 = (ASSESSMENTS[id] && ASSESSMENTS[id].legacyOf) || id;
+    var est = isGcse && a.maxScore ? GcseCore.gradeFor(a.score, GcseCore.defaultBoundaries(a.maxScore)) : null;
+    history.push({ kind: 'ap', id: target2, title: (ASSESSMENTS[target2] && ASSESSMENTS[target2].title) || a.title || id, type: 'AP', at: a.completedAt, score: a.score, max: a.maxScore,
+      pct: gPct(a.score, a.maxScore), grade: est, gradeEst: est != null, dp: rankDp(target2, a.score), notSubmitted: resultNotSubmitted(a),
+      practice: assessmentIsPractice(target2, flags), archived: assessmentIsArchived(target2, flags) });
+  });
+  history.sort(function (x, y) { return x.at - y.at; });
+  var steps = 0, ms = 0;
+  Object.keys(prog).forEach(function (k) {
+    if (['assessments', 'gcseQuiz', 'gcseReview', 'gcseMisconceptions', 'forcedAPAssignment'].indexOf(k) !== -1) return;
+    var lesson = prog[k]; if (!lesson || typeof lesson !== 'object') return;
+    Object.keys(lesson).forEach(function (st) { var x = lesson[st]; if (x && x.completed) steps++; if (x && x.totalMs) ms += x.totalMs; });
+  });
+  var covered = Object.keys(settings.covered || {}).map(gFromTopicKey);
+  return { code: code, className: className, isGcse: isGcse, settings: settings, target: target, access: access, history: history, quiz: prog.gcseQuiz || {},
+    misconceptions: prog.gcseMisconceptions || {}, steps: steps, ms: ms, covered: covered };
+}
+
+// Topic scores from official assessments, plus (optionally) live quizzes / practice.
+function gcseProfileTopicAgg(D, opts) {
+  var agg = {};
+  var add = function (tc, a, p, src) { var A = agg[tc] || (agg[tc] = { a: 0, p: 0, src: {} }); A.a += a; A.p += p; A.src[src] = true; };
+  D.history.forEach(function (x) {
+    if (x.kind !== 'paper' || x.absent || x.practice) return;
+    (x.test.questions || []).forEach(function (q) {
+      var v = x.marks[q.id];
+      (q.topics || []).forEach(function (tc) { add(tc, v == null ? 0 : Number(v), q.marks, 'test'); });
+    });
+  });
+  Object.keys(D.quiz).forEach(function (k) {
+    var tc = gFromTopicKey(k), st = D.quiz[k] || {};
+    if (st.src) {
+      if (opts.quizzes && st.src.live) add(tc, st.src.live.c || 0, st.src.live.a || 0, 'quiz');
+      if (opts.practice) ['practice', 'self'].forEach(function (s2) { if (st.src[s2]) add(tc, st.src[s2].c || 0, st.src[s2].a || 0, 'practice'); });
+    } else if (opts.quizzes) {
+      add(tc, st.correct || 0, st.attempted || 0, 'quiz');   // older records: source not known
+    }
+  });
+  return agg;
+}
+// ↑ / → / ↓ from the last 3 official assessments (last vs the average of the ones before).
+function gcseTrend(history) {
+  var pts = history.filter(function (x) { return !x.absent && !x.practice && !x.archived && !x.notSubmitted && x.pct != null; }).slice(-3);
+  if (pts.length < 2) return { arrow: '–', label: 'Not enough assessments yet', cls: 'text-gray-400' };
+  var last = pts[pts.length - 1].pct;
+  var prev = pts.slice(0, -1).reduce(function (s2, x) { return s2 + x.pct; }, 0) / (pts.length - 1);
+  var diff = Math.round(last - prev);
+  if (diff >= 5) return { arrow: '↑', label: 'Improving (+' + diff + '%)', cls: 'text-green-700' };
+  if (diff <= -5) return { arrow: '↓', label: 'Dropping (' + diff + '%)', cls: 'text-red-700' };
+  return { arrow: '→', label: 'Steady', cls: 'text-gray-700' };
+}
+
+function gcseRenderProfile() {
+  var D = gcse.profileData, o = gcse.profileOpts, body = gEl('gcse-profile-body');
+  if (!D || !body) return;
+  var official = D.history.filter(function (x) { return x.kind === 'paper' && !x.absent && !x.practice; });
+  var working = gcseWorkingGradeFromHistory(official);
+  var latest = D.history.filter(function (x) { return !x.absent && !x.practice && x.dp != null; }).slice(-1)[0];
+  var trend = gcseTrend(D.history);
+  var gap = working != null && D.target != null ? working - D.target : null;
+  var card = function (v, l, cls) { return '<div class="rounded-lg border border-gray-200 p-3 text-center"><div class="text-2xl font-bold ' + (cls || '') + '">' + v + '</div><div class="text-xs text-gray-500">' + l + '</div></div>'; };
+  var h = '<div class="text-sm text-gray-500 mb-3">' + gEsc(D.code) + ' · ' + gEsc(D.className || 'No class') + '</div>' +
+    '<div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">' +
+      card(GcseCore.gradeLabel(working), 'Working grade') + card(GcseCore.gradeLabel(D.target), 'Target grade') +
+      card(gap == null ? '–' : (gap >= 0 ? '▲ ' + (gap > 0 ? '+' + gap : '0') : '▼ ' + gap), 'Gap', gap == null ? '' : gap >= 0 ? 'text-green-700' : 'text-red-700') +
+      card(latest ? latest.dp : '–', 'Latest DP (1–4)') + card(trend.arrow, trend.label, trend.cls) +
+      card(D.access.lastSeen ? new Date(D.access.lastSeen).toLocaleDateString('en-GB') : '–', 'Last login') + '</div>';
+  // Data source toggles
+  h += '<div class="flex flex-wrap items-center gap-3 mb-3 text-sm rounded border border-gray-200 bg-gray-50 px-3 py-2"><span class="font-semibold">Topic data from:</span>' +
+    '<span class="px-2 py-0.5 rounded bg-white border border-gray-300 text-xs">✓ Assessments</span>' +
+    '<label class="text-xs"><input type="checkbox" class="gp-opt" data-k="quizzes"' + (o.quizzes ? ' checked' : '') + '> Live quizzes</label>' +
+    '<label class="text-xs"><input type="checkbox" class="gp-opt" data-k="practice"' + (o.practice ? ' checked' : '') + '> Practice (Fix my mistakes)</label>' +
+    (o.quizzes || o.practice ? '<span class="text-xs font-semibold text-amber-700">Including ' + [o.quizzes ? 'quiz' : '', o.practice ? 'practice' : ''].filter(Boolean).join(' + ') + ' data</span>' : '<span class="text-xs text-gray-500">Assessments only (most reliable)</span>') + '</div>';
+  // Paper split (official tests)
+  var allQs = [], allMarks = {};
+  official.forEach(function (x) { (x.test.questions || []).forEach(function (q) { var key = x.id + ':' + q.id; allQs.push({ id: key, marks: q.marks, topics: q.topics }); allMarks[key] = x.marks[q.id]; }); });
+  if (allQs.length) h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">Paper 1 vs Paper 2</h4>' + gcseStudentSplitHtml(allQs, allMarks, true) + '</div>';
+  // Topics: named bars, weakest first, untaught hidden
+  var agg = gcseProfileTopicAgg(D, o);
+  var hiddenCount = 0;
+  var visibleTopic = function (tc) {
+    if (o.showHidden || !D.covered.length) return true;
+    var taught = D.covered.indexOf(tc) !== -1 || D.covered.some(function (c) { return J277.expand(tc).indexOf(c) !== -1; });
+    return taught || (agg[tc] && agg[tc].src.test);
+  };
+  var bars = Object.keys(agg).map(function (tc) { return { code: tc, pct: gPct(agg[tc].a, agg[tc].p), src: agg[tc].src }; })
+    .filter(function (x) { if (x.pct == null) return false; if (!visibleTopic(x.code)) { hiddenCount++; return false; } return true; })
+    .sort(function (x, y) { return x.pct - y.pct; });
+  var showAll = o.allTopics;
+  h += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4"><div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><div class="flex flex-wrap justify-between items-center gap-2 mb-2"><h4 class="font-bold">Topics – weakest first</h4>' +
+    (D.covered.length ? '<label class="text-xs text-gray-600"><input type="checkbox" class="gp-opt" data-k="showHidden"' + (o.showHidden ? ' checked' : '') + '> Show topics not taught yet' + (hiddenCount ? ' (' + hiddenCount + ')' : '') + '</label>' : '') + '</div>' +
+    (bars.length ? bars.slice(0, showAll ? bars.length : 8).map(function (x) {
+      var col = x.pct >= 70 ? '#16a34a' : x.pct >= 40 ? '#d97706' : '#dc2626';
+      return '<div class="flex items-center gap-2 text-sm mb-1"><span class="w-64 truncate" title="' + gEsc(J277.label(x.code)) + '">' + gEsc(J277.label(x.code)) + '</span>' +
+        '<div class="flex-1 h-3 bg-gray-100 rounded"><div class="h-3 rounded" style="width:' + x.pct + '%;background:' + col + '"></div></div><span class="w-10 text-right text-xs font-bold">' + x.pct + '%</span>' +
+        (x.src.quiz || x.src.practice ? '<span class="text-[10px] text-amber-700" title="includes quiz/practice data">*</span>' : '') + '</div>';
+    }).join('') + (bars.length > 8 ? '<button type="button" class="gp-opt-btn text-xs text-blue-700 mt-1" data-k="allTopics">' + (showAll ? 'Show weakest 8 only' : 'Show all ' + bars.length + ' topics') + '</button>' : '') :
+      '<p class="text-sm text-gray-500">No assessment data on GCSE topics yet' + (o.quizzes || o.practice ? '' : ' – tick Live quizzes or Practice to see quiz data') + '.</p>') +
+    '</div><div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold mb-2">Misconceptions</h4>' + gcseProfileMisconceptionsHtml(D) +
+    '<h4 class="font-bold mt-4 mb-1">Website activity</h4><p class="text-sm">' + D.steps + ' lesson steps completed · ' + Math.round(D.ms / 60000) + ' minutes on lessons</p></div></div>';
+  h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">Progress over time <span class="text-xs font-normal text-gray-500">(official assessments)</span></h4>' +
+    gcseProfileChart(D.history.filter(function (x) { return !x.practice && !x.notSubmitted; })) + '</div>';
+  // History
+  h += '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold mb-2">History</h4><div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50"><th class="p-1 text-left">Date</th><th class="p-1 text-left">Year</th><th class="p-1 text-left">Assessment</th><th class="p-1">Score</th><th class="p-1">Grade</th><th class="p-1">DP</th><th class="p-1 text-left"></th></tr>' +
+    D.history.slice().reverse().map(function (x) {
+      var tags = [x.practice ? 'practice' : '', x.archived ? 'archived' : '', x.notSubmitted ? 'not submitted' : ''].filter(Boolean);
+      var grade = x.absent ? '' : (x.grade != null ? GcseCore.gradeLabel(x.grade) + (x.gradeEst ? ' <span class="text-gray-400">est.</span>' : '') : '–');
+      return '<tr class="border-t ' + (x.practice || x.archived ? 'text-gray-500' : '') + '"><td class="p-1">' + (x.at ? new Date(x.at).toLocaleDateString('en-GB') : '') + '</td>' +
+        '<td class="p-1">' + (x.at && typeof academicYearLabel === 'function' ? academicYearLabel(academicYearStart(x.at)) : '') + '</td>' +
+        '<td class="p-1">' + gEsc(x.title) + ' <span class="text-gray-400">· ' + gEsc(x.type) + '</span></td>' +
+        '<td class="p-1 text-center">' + (x.absent ? 'ABS' : (x.score != null ? x.score + ' / ' + x.max : '')) + '</td><td class="p-1 text-center">' + grade + '</td>' +
+        '<td class="p-1 text-center">' + (x.dp != null ? x.dp : '–') + '</td><td class="p-1 text-gray-500">' + tags.join(', ') + '</td></tr>';
+    }).join('') + '</table></div><p class="text-[11px] text-gray-500 mt-1">Grades use each test\'s boundaries, or the J277 defaults when none are set. "est." = estimated from the AP percentage. DP: your DP, the suggested DP, or the class ranking (as in AP Results).</p></div>';
+  // Notes
+  h += '<div class="border border-gray-200 rounded-lg p-3"><div class="flex justify-between items-center mb-2"><h4 class="font-bold">Teacher notes <span class="text-xs font-normal text-gray-500">(saved in your private Google sheet "' + GCSE_NOTES_NAME + '", not Firebase)</span></h4>' +
+    '<button type="button" id="gcse-notes-load" class="text-xs px-2 py-1 rounded border border-gray-300">Load notes</button></div><div id="gcse-notes-list" class="text-sm text-gray-500">Click "Load notes" (needs Google sign-in).</div>' +
+    '<div class="flex gap-2 mt-2"><input id="gcse-note-new" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" placeholder="Add a note…"><button type="button" id="gcse-note-add" class="jhncc-primary px-3 py-1 rounded text-sm">Add</button></div></div>';
+  body.innerHTML = h;
+  body.querySelectorAll('.gp-opt').forEach(function (cb) { cb.onchange = function () { o[cb.dataset.k] = cb.checked; gcseRenderProfile(); }; });
+  body.querySelectorAll('.gp-opt-btn').forEach(function (b) { b.onclick = function () { o[b.dataset.k] = !o[b.dataset.k]; gcseRenderProfile(); }; });
+  gEl('gcse-notes-load').onclick = function () { gcseProfileLoadNotes(D.code); };
+  gEl('gcse-note-add').onclick = function () { gcseProfileAddNote(D.code); };
+}
+function gcseProfileMisconceptionsHtml(D) {
+  var ids = Object.keys(D.misconceptions || {}).sort(function (x, y) { return (D.misconceptions[y].count || 0) - (D.misconceptions[x].count || 0); });
+  if (!ids.length) return '<p class="text-sm text-gray-500">None recorded yet.</p>';
+  return ids.slice(0, 6).map(function (id) {
+    var c = J277.feedbackCode(id);
+    return '<div class="text-sm mb-1"><span class="px-1.5 rounded bg-amber-100 text-amber-900 font-bold text-xs">' + gEsc(id) + '</span> ' + gEsc(c ? c.text : '') + ' <span class="text-xs text-gray-500">×' + (D.misconceptions[id].count || 1) + '</span></div>';
+  }).join('');
 }
 function gcseProfileChart(history) {
   var pts = history.filter(function (x) { return !x.absent && x.pct != null; });
