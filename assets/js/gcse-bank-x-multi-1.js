@@ -14,7 +14,7 @@
     'Cache stores frequently used data / instructions (1)\nso the CPU does not have to wait to fetch them from slower RAM / they are accessed faster (1)',
     '=frequently|often|regularly|commonly|recently\n=faster|quicker|quickly|slower ram|than ram|wait less|less time',
     '2 | Cache stores frequently used instructions so the CPU can access them faster than from RAM\n1 | It holds data that is used often\n1 | It is quicker than RAM\n0 | Cache is a type of secondary storage', ['C3']);
-  S('1.1.1f', '', 3, 'Describe', 2, 'Describe the key features of Von Neumann architecture.',
+  S('1.1.1f', '', 3, 'Describe', 2, 'Describe how a computer stores a program and its data, and how the CPU works through the instructions.',
     'Data and instructions are stored together in the same memory (1)\nInstructions are fetched and executed one at a time / in sequence, using registers such as the PC, MAR and MDR (1)',
     '=same memory|together|single memory|shared memory|one memory|both stored in memory|stored in the same\n=one at a time|in sequence|sequentially|in turn|registers|pc|mar|mdr|fetch execute|fetch-execute',
     '2 | Data and instructions are stored in the same memory and instructions are fetched one at a time\n1 | Data and instructions are stored together\n0 | It has lots of cores', ['C4']);

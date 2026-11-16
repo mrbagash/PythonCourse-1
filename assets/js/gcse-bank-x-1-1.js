@@ -70,15 +70,15 @@
     '[MAR] holds|stores|contains|keeps -> address ! data|instruction\n[MDR] holds|stores|contains|keeps -> data|instruction ! address',
     '2 | The MAR holds the address. The MDR holds the data\n2 | The MAR stores the memory address being used. The MDR stores the instruction that was fetched\n1 | The MAR holds the address\n0 | The MAR holds the data and the MDR holds the address', ['R1']);
 
-  // 1.1.1f Von Neumann
-  M('1.1.1f', '', 2, 'What is a key feature of Von Neumann architecture?', ['Data and instructions are stored in separate memories', 'Data and instructions are stored together in the same memory', 'The CPU has no registers', 'It only works with solid state drives'], 'B',
-    ['Separate memories for data and instructions is Harvard architecture.', '', 'Von Neumann CPUs use registers such as the PC, MAR and MDR.', 'Von Neumann architecture is about the CPU and memory, not drives.'], ['C4']);
-  S('1.1.1f', '', 3, 'State', 1, 'State how data and instructions are stored in Von Neumann architecture.',
+  // 1.1.1f How data and instructions are stored
+  M('1.1.1f', '', 2, 'How does a computer store a program and the data it uses?', ['Data and instructions are stored in separate memories', 'Data and instructions are stored together in the same memory', 'The CPU has no registers', 'It only works with solid state drives'], 'B',
+    ['Data and instructions are not kept in separate memories – they share the same memory.', '', 'The CPU uses registers such as the PC, MAR and MDR.', 'This is about the CPU and memory, not about drives.'], ['C4']);
+  S('1.1.1f', '', 3, 'State', 1, 'State how data and instructions are stored in the memory of a computer.',
     'Together in the same memory (stored program concept).',
     '=same|together|single|shared|one memory',
     '1 | They are stored together in the same memory\n1 | Both are in one memory\n0 | In separate memories\n0 | In the CPU only', ['C4']);
-  M('1.1.1f', '', 4, 'Which register is NOT part of Von Neumann architecture as described in the J277 specification?', ['Program Counter', 'MAR', 'MDR', 'Graphics register'], 'D',
-    ['The PC is one of the Von Neumann registers.', 'The MAR is one of the Von Neumann registers.', 'The MDR is one of the Von Neumann registers.', ''], ['C4']);
+  M('1.1.1f', '', 4, 'Which of these is NOT a register used in the fetch-execute cycle?', ['Program Counter', 'MAR', 'MDR', 'Graphics register'], 'D',
+    ['The PC is used in the cycle: it holds the address of the next instruction.', 'The MAR is used in the cycle: it holds the address being accessed.', 'The MDR is used in the cycle: it holds the data or instruction fetched.', ''], ['C4']);
 
   // 1.1.2a Clock speed
   M('1.1.2a', '', 1, 'What does the clock speed of a CPU measure?', ['How much data the CPU can store', 'How many cycles (instructions) the CPU carries out per second', 'How many cores the CPU has', 'How hot the CPU gets'], 'B',

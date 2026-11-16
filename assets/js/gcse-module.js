@@ -561,6 +561,7 @@ function gcseRenderNewTestForm(prefill) {
         '<label class="text-xs text-gray-600">Copy from another test<select id="gcse-nt-copy" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"><option value="">—</option>' +
           others.map(function (id) { return '<option value="' + gEsc(id) + '">' + gEsc(gcse.tests[id].title + ' (' + gcse.tests[id].className + ')') + '</option>'; }).join('') + '</select></label>' +
       '</div>' +
+      (typeof GCSE_PAPERS !== 'undefined' ? '<div class="rounded border border-green-200 bg-green-50 p-2 text-sm"><b>Ready-made papers</b> <span class="text-xs text-gray-600">– questions, mark scheme and redo questions are already set up; you only enter marks.</span><div class="flex flex-wrap gap-2 mt-1">' + Object.keys(GCSE_PAPERS).map(function (k) { return '<button type="button" class="gcse-nt-paper px-2 py-1 rounded border border-green-600 text-green-800 bg-white text-xs font-semibold" data-paper="' + k + '">' + gEsc(GCSE_PAPERS[k].title) + '</button>'; }).join('') + '</div></div>' : '') +
       '<div><div class="text-xs text-gray-600 mb-1">Grade boundaries (minimum marks). Filled with the ' + GcseCore.DEFAULT_BOUNDARY_SOURCE.label + ' boundaries as percentages – change them if you have real ones. ' +
         '<button type="button" id="gcse-nt-defaults" class="underline text-blue-700">Use J277 default</button></div>' + gcseBoundaryInputs('gcse-nt', prefill.boundaries || GcseCore.defaultBoundaries(prefill.total)) + '</div>' +
       '<div><div class="text-xs text-gray-600 mb-1">Test map – paste the table from the Topic Codes Guide (Question, Max marks, Topic, Second topic, Command word)</div>' +
@@ -580,6 +581,14 @@ function gcseRenderNewTestForm(prefill) {
     if (!gEl('gcse-nt-title').value) gEl('gcse-nt-title').value = t.title;
   };
   gEl('gcse-nt-cancel').onclick = gcseRenderTest;
+  document.querySelectorAll('.gcse-nt-paper').forEach(function (b) {
+    b.onclick = function () {
+      var P = GCSE_PAPERS[b.dataset.paper];
+      var total = P.questions.reduce(function (s, q) { return s + q.marks; }, 0);
+      gcseRenderNewTestForm({ title: gEl('gcse-nt-title').value.trim() || P.title, total: total, paper: P.key, map: 'Question,Max marks,Topic,Second topic,Command word\n' + P.questions.map(function (q) { return [q.id, q.marks, q.topics[0] || '', q.topics[1] || '', q.command || ''].join(','); }).join('\n') });
+      gEl('gcse-nt-check').click();
+    };
+  });
   var fillDefaults = function (force) {
     var total = Number(gEl('gcse-nt-total').value) || (gcse.pendingMap && gcse.pendingMap.total);
     var b = GcseCore.defaultBoundaries(total); if (!b) return;
@@ -624,6 +633,11 @@ function gcseRenderNewTestForm(prefill) {
       boundaries: gcseReadBoundaries('gcse-nt'), showGrades: false
     };
     if (prefill.bankIds) test.questions.forEach(function (q, i) { if (prefill.bankIds[i]) q.bankId = prefill.bankIds[i]; });
+    if (prefill.paper && typeof GCSE_PAPERS !== 'undefined' && GCSE_PAPERS[prefill.paper]) {
+      var byId = {}; GCSE_PAPERS[prefill.paper].questions.forEach(function (q) { byId[redoNormId(q.id)] = q; });
+      test.paper = prefill.paper;
+      test.questions.forEach(function (q) { var pq = byId[redoNormId(q.id)]; if (!pq) return; q.text = pq.text; q.markScheme = pq.markScheme; if (pq.model) q.model = pq.model; q.twin = pq.twin; });
+    }
     try {
       await state.db.ref('gcse/tests/' + id).set(test);
       gcse.tests[id] = test; gcse.testId = id; gcse.viewTab = 'grades';
@@ -685,7 +699,7 @@ async function gcseRenderTestView(box, seq) {
     var data = await Promise.all([gcseLoadResults(gcse.testId), gcseLoadTargets(), gcseLoadClassCodes(gcse.className),
       state.db.ref('classes/' + gcse.className + '/apFeedback/' + gcse.testId).get().then(function (s) { return s.exists() ? s.val() : null; }).catch(function () { return null; })]);
     if (seq !== gcse.renderSeq || !box.isConnected) return;
-    gcse.results = data[0]; gcse.codes = data[2]; fbInfo = data[3];
+    gcse.results = data[0]; gcse.codes = data[2]; fbInfo = data[3]; gcse.fbInfo = fbInfo;
   } catch (e) { if (box.isConnected) box.innerHTML = '<p class="text-red-600 text-sm">' + gEsc(gDbError(e)) + '</p>'; return; }
   var rows = gcseStudentRows(t, gcse.results, gcse.targets, gcse.codes);
   var hasResults = rows.some(function (r) { return !r.missing; });
@@ -693,6 +707,7 @@ async function gcseRenderTestView(box, seq) {
   var toCheck = online && hasResults && typeof gcseMarkUncheckedSummary === 'function' ? gcseMarkUncheckedSummary(t).mustCheck : 0;
   var tab = hasResults ? (gcse.viewTab || (toCheck ? 'mark' : 'grades')) : 'marks';
   if (tab === 'mark' && !(online && hasResults)) tab = 'grades';
+  if (tab === 'release') tab = 'feedback';
   if (collected) gcseStatus('Collected ' + collected + ' new submission' + (collected === 1 ? '' : 's') + ' – auto-marked; check them in Mark answers.');
   var tabBtn = function (k, label) {
     var on = tab === k;
@@ -711,7 +726,7 @@ async function gcseRenderTestView(box, seq) {
   var h = '<div class="flex items-center gap-3 mb-1"><button type="button" id="gcse-back-list" class="text-sm text-blue-700 hover:underline">← All tests</button>' +
     '<h3 class="text-lg font-bold text-gray-800">' + gEsc(t.title) + '</h3><span class="text-xs text-gray-500">' + gcseTestTotal(t) + ' marks · ' + (t.questions || []).length + ' questions</span></div>' +
     '<div class="flex items-center gap-1 border-b border-gray-200 mb-3">' +
-      (hasResults ? (online && typeof gcseMarkRender === 'function' ? tabBtn('mark', 'Mark answers' + (toCheck ? ' <span class="ml-1 px-1.5 rounded-full text-[11px] bg-orange-100 text-orange-800">' + toCheck + '</span>' : ' ✓')) : '') + tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback') + tabBtn('release', fbInfo && fbInfo.released ? 'Release ✓' : 'Release') + (typeof wcfRenderActions === 'function' && fbInfo && fbInfo.wcf ? tabBtn('actions', 'Actions') : '') : tabBtn('marks', 'Add marks')) +
+      (hasResults ? (online && typeof gcseMarkRender === 'function' ? tabBtn('mark', 'Mark answers' + (toCheck ? ' <span class="ml-1 px-1.5 rounded-full text-[11px] bg-orange-100 text-orange-800">' + toCheck + '</span>' : ' ✓')) : '') + tabBtn('grades', 'Grades') + tabBtn('feedback', 'Class feedback' + (fbInfo && fbInfo.released ? ' ✓' : '')) + (typeof wcfRenderActions === 'function' && fbInfo && fbInfo.wcf ? tabBtn('actions', 'Actions') : '') : tabBtn('marks', 'Add marks')) +
       menu + '</div><div id="gcse-import-out"></div><div id="gcse-settings-out"></div><div id="gcse-tab-body">';
   if (tab === 'marks' && t.mode === 'online') {
     h += '<div class="rounded border border-green-200 bg-green-50 p-4 text-sm text-green-900 mb-3"><b>Online test – ready to run.</b> Start it with the class from <b>Classes → Start AP</b>, or give it to absent students with <b>Force AP</b>. Results appear here as students submit.</div>';
@@ -813,6 +828,7 @@ function gcseWriteTemplate(file, aoa, nq) {
       ['Optional rows (leave blank if you like) – they let class feedback fill itself in:'],
       ['  Question text: the question as pupils saw it. Model answer: a full-mark answer. Common mistake: what you saw pupils get wrong, e.g. "mixed up MAR and MDR".'],
       ['  Bank ID: if the question is in the question bank, its ID alone pulls in the question, mark scheme, model answer, marks and topic.'],
+      ['  Similar questions: add a row called "Similar questions" with bank IDs (separated by commas) to choose which questions pupils redo. Leave it out and the app picks questions on the same topic.'],
       ['Type each student\'s mark for each question.'], ['ABS = absent (left out of averages and grades).'],
       ['Leave a cell blank if the question was NOT attempted (different from 0).'], ['Do not change the Code column – it is how students are matched.'],
       ['Names are optional: you can delete the Name column (e.g. before sharing the sheet). Only Code and the question columns are needed; Target grade and DP can be removed too.'],
@@ -859,7 +875,7 @@ async function gcseHandleUpload(file) {
 
 // Optional rows above the Name/Code row. They are what lets class feedback fill itself in:
 // the question, what a good answer looks like, the mistake you saw, or just the bank ID.
-var GCSE_SHEET_EXTRAS = [['question text', 'text', 'Question text'], ['model answer', 'model', 'Model answer'], ['mark scheme', 'markScheme', 'Mark scheme'], ['common mistake', 'note', 'Common mistake'], ['bank id', 'bankId', 'Bank ID']];
+var GCSE_SHEET_EXTRAS = [['question text', 'text', 'Question text'], ['model answer', 'model', 'Model answer'], ['mark scheme', 'markScheme', 'Mark scheme'], ['common mistake', 'note', 'Common mistake'], ['bank id', 'bankId', 'Bank ID'], ['similar questions', 'similar', 'Similar questions']];
 function gcseSheetRowKey(v) { return String(v == null ? '' : v).replace(/\(.*?\)/g, '').trim().toLowerCase(); }
 // → function(col) giving { text, model, markScheme, note, bankId } for that column (only the cells that are filled in).
 function gcseSheetExtras(grid, hi) {
@@ -897,6 +913,7 @@ function gcseApplyExtras(q, ex, warnings) {
   if (ex.text) q.text = ex.text;
   if (ex.markScheme) q.markScheme = ex.markScheme;
   if (ex.model) q.model = ex.model;
+  if (ex.similar) q.similar = String(ex.similar).split(/[\s,;]+/).map(function (x) { return x.trim(); }).filter(Boolean);
   return ex.note || '';
 }
 function gcseExtrasSummary(ex) {
@@ -1452,7 +1469,8 @@ async function gcseRelease(t, rows) {
     practice: practice
   };
   var updates = {};
-  if (typeof wcfReleaseUpdates === 'function') { try { await wcfReleaseUpdates(t, rows, updates, feedback); } catch (e) {} }
+  var redoInfo = typeof redoReleaseInfo === 'function' ? redoReleaseInfo(t) : null;
+  if (redoInfo) { feedback.redo = { qs: redoInfo.qs, bank: redoInfo.bank, at: redoInfo.at }; feedback.gradeAfter = t.gradeAfter !== false; }
   updates['classes/' + t.className + '/apFeedback/' + gcse.testId] = feedback;
   var releasedAt = Date.now();
   rows.forEach(function (r) {
@@ -1466,60 +1484,46 @@ async function gcseRelease(t, rows) {
   try {
     await state.db.ref().update(updates);
     gcseStatus('Feedback released to ' + t.className + (t.showGrades ? ' (with grades)' : ' (grades hidden)') + '. ' +
-      (practice.length ? practice.length + ' practice questions attached for "Fix my mistakes".' : 'Load the question bank before releasing to attach "Fix my mistakes" practice.'));
+      (redoInfo ? 'Each pupil can now redo the questions they dropped marks on – ' + redoInfo.ready + ' of ' + redoInfo.total + ' questions have a new version ready.' : ''));
   } catch (e) { gcseStatus(gDbError(e), true); }
 }
 
 // ── Student view of a paper test (inside "AP Feedback") ─────────
 function gcseRenderStudentPaperFeedback(body, feedback, rec) {
-  var t = { questions: (rec.rubric || []).map(function (c) { return { id: c.id, marks: c.marks, topics: c.topics || [] }; }) };
-  var marks = {};
-  (rec.rubric || []).forEach(function (c) { marks[c.id] = c.attempted === false ? null : c.awarded; });
-  var s = gcseStudentTopicSummary(t, marks);
-  // Grade after feedback tasks: hide grades until this pupil's tasks are done.
-  if (feedback.wcf && feedback.wcf.gradeAfter && feedback.showGrades && !feedback._tasksChecked && typeof wcfTasksLeft === 'function') {
+  var testId = feedback.assessmentId || rec.assessmentId;
+  var canRedo = typeof redoParts === 'function';
+  // The pupil's redo progress decides what the checklist and the grade show.
+  if (canRedo && feedback._redoFor !== testId) {
     body.innerHTML = '<p class="text-gray-400 text-sm">Loading…</p>';
-    wcfTasksLeft(feedback.assessmentId || rec.assessmentId).then(function (n) { feedback._tasksChecked = true; feedback._tasksLeft = n; gcseRenderStudentPaperFeedback(body, feedback, rec); });
+    redoLoad(testId).then(function (st) { feedback._redoFor = testId; feedback._redoState = st || {}; if (body.isConnected) gcseRenderStudentPaperFeedback(body, feedback, rec); });
     return;
   }
-  var gradesOn = !!feedback.showGrades && !feedback._tasksLeft;
+  var st = (canRedo && feedback._redoState) || {};
+  var parts = canRedo ? redoParts(rec, feedback) : [];
+  var left = canRedo ? redoLeft(parts, st) : 0;
+  var passed = {};
+  parts.forEach(function (p) { if (st.parts && st.parts[p.key] && st.parts[p.key].ok) passed[p.id] = true; });
+  var t = { questions: (rec.rubric || []).map(function (c) { return { id: c.id, marks: c.marks, topics: c.topics || [] }; }) };
+  var marks = {}, now = {};
+  (rec.rubric || []).forEach(function (c) { marks[c.id] = c.attempted === false ? null : c.awarded; now[c.id] = passed[c.id] ? c.marks : marks[c.id]; });
+  // The checklist moves as questions are redone for full marks (the score stays as it was on the day).
+  var s = gcseStudentTopicSummary(t, now);
+  var anyPassed = Object.keys(passed).length > 0;
+  var gradesOn = !!feedback.showGrades && !(feedback.gradeAfter === true && left);
   var h = '<div class="border border-gray-200 rounded-lg p-4 space-y-4">' +
-    (feedback._tasksLeft ? '<div class="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">📝 Finish your <b>feedback tasks</b> (' + feedback._tasksLeft + ' left) to see your grade. <button type="button" id="gcse-open-tasks" class="ml-2 jhncc-primary px-3 py-1 rounded text-xs font-semibold">Start</button></div>' : '') +
     '<div><h3 class="text-lg font-bold">' + gEsc(rec.title || feedback.title || 'Test') + '</h3><p class="text-sm text-gray-600">Score: <b>' + rec.score + ' / ' + rec.maxScore + '</b>' +
-    (gradesOn && rec.grade != null ? ' · Working grade: <b>' + GcseCore.gradeLabel(rec.grade) + '</b>' : '') + '</p></div>' +
+    (gradesOn && rec.grade != null ? ' · Working grade: <b>' + GcseCore.gradeLabel(rec.grade) + '</b>' : '') +
+    (feedback.showGrades && !gradesOn ? ' · <span class="text-amber-800">finish your redo to see your grade</span>' : '') + '</p></div>' +
     gcseStudentSplitHtml(t.questions, marks, gradesOn) +
     gcseChecklistHtml(s) +
-    '<div class="rounded border border-gray-200 p-3"><div class="font-semibold mb-1">Even better if – your next steps</div>' +
-    (s.ebi.length ? '<ol class="text-sm space-y-1.5">' + s.ebi.map(function (p, i) {
-      return '<li class="gcse-next flex flex-wrap items-center gap-2" data-topic="' + gEsc(p.code) + '"><span><b>' + (i + 1) + '.</b> ' + gEsc(gTopicName(p.code)) + '</span><span class="gcse-next-act ml-auto"></span></li>';
-    }).join('') + '</ol>' : '<p class="text-sm text-gray-600">No weak topics in this test – try some harder past-paper questions.</p>') + '</div>' +
-    (feedback.reteach && feedback.reteach.length && !feedback._tasksLeft ? '<div class="text-sm text-gray-600"><b>Whole class:</b> we will revisit ' + feedback.reteach.slice(0, 3).map(function (T) { return gEsc(gTopicName(T.code)); }).join(', ') + '.</div>' : '') +
-    '<div id="gcse-fix-box"></div></div>';
+    (anyPassed ? '<p class="text-xs text-gray-500 -mt-2">Your checklist has been updated with the questions you have redone.</p>' : '') +
+    '<div id="gcse-redo-box"></div></div>';
   body.innerHTML = h;
-  if (gEl('gcse-open-tasks')) gEl('gcse-open-tasks').onclick = function () { var m = gEl('modal-student-ap-feedback'); if (m) m.classList.add('hidden'); wcfOpenTasks(); };
-  // One action per next step: the feedback task if the class is fixing that topic, otherwise practice on just that topic.
-  var topicHit = function (q, tc) { return (q.topics || []).some(function (x) { return x === tc || String(x).indexOf(tc) === 0 || String(tc).indexOf(x) === 0; }); };
-  var focusTopics = feedback._tasksLeft && feedback.wcf ? GcseCore.asList(feedback.wcf.focuses).map(function (f) { return f.topic; }) : [];
-  body.querySelectorAll('.gcse-next').forEach(function (li) {
-    var tc = li.dataset.topic, slot = li.querySelector('.gcse-next-act');
-    var qs = (feedback.practice || []).filter(function (q) { return topicHit(q, tc); });
-    var isFocus = focusTopics.some(function (ft) { return ft && (ft === tc || String(ft).indexOf(tc) === 0 || String(tc).indexOf(ft) === 0); });
-    if (isFocus) { slot.innerHTML = '<button type="button" class="gcse-next-task px-3 py-1 rounded border border-gray-300 text-xs font-semibold">Do the feedback task</button>'; slot.firstChild.onclick = function () { var m = gEl('modal-student-ap-feedback'); if (m) m.classList.add('hidden'); wcfOpenTasks(); }; }
-    else if (qs.length) { slot.innerHTML = '<button type="button" class="gcse-next-practise px-3 py-1 rounded border border-gray-300 text-xs font-semibold">Practise this</button>'; slot.firstChild.onclick = function () { gcseStartPractice(qs, gTopicName(tc)); }; }
-    else slot.innerHTML = '<span class="text-xs text-gray-500">Revise this from your notes</span>';
-  });
-  var weak = s.list.filter(function (p) { return p.pct < 100; }).map(function (p) { return p.code; });
-  var pool = (feedback.practice || []).filter(function (q) { return (q.topics || []).some(function (tc) { return weak.indexOf(tc) !== -1; }); });
-  var box = gEl('gcse-fix-box');
-  if (feedback._tasksLeft) return;   // tasks first; practice appears once they are done
-  if (pool.length) {
-    box.innerHTML = '<button type="button" id="gcse-fix-btn" class="jhncc-primary px-4 py-2 rounded font-semibold text-sm">Fix my mistakes (' + Math.min(pool.length, 8) + ' questions)</button>';
-    gEl('gcse-fix-btn').onclick = function () { gcseStartPractice(pool, rec.title || feedback.title); };
-  } else if (weak.length) {
-    box.innerHTML = '<p class="text-xs text-gray-500">Practice questions for your topics will appear here when your teacher adds them.</p>';
-  }
+  if (!canRedo) return;
+  var box = gEl('gcse-redo-box');
+  box.innerHTML = redoPanelHtml(parts, st, feedback);
+  redoBindPanel(box, feedback, rec, parts, st, function () { feedback._redoFor = null; if (body.isConnected) gcseRenderStudentPaperFeedback(body, feedback, rec); });
 }
-
 function gcseStudentSplitHtml(questions, marks, showGrades) {
   var sp = gcsePaperSplit(questions, marks);
   var keys = Object.keys(sp.papers).sort();
@@ -1653,7 +1657,7 @@ function gcseAddReview(q, answer, result, source) {
   state.db.ref('progress/' + state.uid + '/gcseReview').push({
     qid: q.gcseQid || '', question: q.q || '', answer: String(answer || '').slice(0, 2000), auto: result.marks, max: result.max,
     reason: (result.reasons || []).join('; ') || (source === 'appeal' ? 'Student thinks they are right' : ''),
-    topics: q.gcseTopics || [], source: source, status: 'pending', at: Date.now(), className: state.className || ''
+    topics: q.gcseTopics || [], source: source, status: 'pending', at: Date.now(), className: state.className || '', redo: q.redo || null
   }).catch(function () {});
 }
 
@@ -2464,16 +2468,9 @@ async function gcseLoadReview() {
     b.onclick = async function () {
       var it = items[Number(b.dataset.i)];
       var ok = b.dataset.ok === '1';
-      var updates = {};
-      updates['progress/' + it.code + '/gcseReview/' + it.key + '/status'] = ok ? 'accepted' : 'rejected';
-      updates['progress/' + it.code + '/gcseReview/' + it.key + '/decidedAt'] = Date.now();
       try {
-        await state.db.ref().update(updates);
-        if (ok && it.auto < it.max) {
-          (it.topics || []).forEach(function (tc) {
-            state.db.ref('progress/' + it.code + '/gcseQuiz/' + gTopicKey(tc) + '/correct').transaction(function (c) { return (c || 0) + 1; }, null, false);
-          });
-        }
+        if (typeof gcseDecideReview === 'function') await gcseDecideReview(it, ok);
+        if (typeof REDO !== 'undefined') REDO.notify = null;
         gcseLoadReview();
       } catch (e) { gcseStatus(gDbError(e), true); }
     };

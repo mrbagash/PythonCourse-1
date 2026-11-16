@@ -464,14 +464,72 @@ async function hwStudentBanner() {
   host.insertBefore(b, host.firstChild);
   gEl('hw-banner-go').onclick = function () { hwOpen(h.id); };
 }
+// ── Exam-paper look (shared by homework and "Redo my questions") ──────────────
+function hwCss() {
+  if (gEl('xp-style')) return;
+  var st = document.createElement('style'); st.id = 'xp-style';
+  st.textContent = '.xp-shell{background:#fff;border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.25);width:100%;max-width:46rem;overflow:hidden}' +
+    '.xp-top{display:flex;align-items:center;gap:.75rem;padding:.8rem 1.25rem;background:rgb(176,28,35);color:#fff}.xp-top h2{font-weight:800;font-size:1.05rem;line-height:1.2}.xp-top .xp-sub{font-size:.75rem;opacity:.9}' +
+    '.xp-count{margin-left:auto;font-size:.8rem;font-weight:700;background:rgba(255,255,255,.18);padding:.15rem .6rem;border-radius:999px;white-space:nowrap}.xp-x{color:#fff;opacity:.85;font-size:1.25rem;line-height:1;padding:.1rem .35rem;border-radius:6px}.xp-x:hover{opacity:1;background:rgba(255,255,255,.15)}' +
+    '.xp-track{height:6px;background:#f3f4f6}.xp-bar{height:6px;background:#16a34a;transition:width .3s}' +
+    '.xp-body{padding:1.25rem 1.5rem 1.5rem}' +
+    '.xp-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem;border-bottom:2px solid #111827;padding-bottom:.4rem;margin-bottom:.9rem}' +
+    '.xp-num{font-weight:800;font-size:1.1rem;color:#111827}.xp-topic{font-size:.78rem;color:#6b7280}.xp-marks{margin-left:auto;font-weight:700;color:#111827;white-space:nowrap}' +
+    '.xp-chip{font-size:.7rem;font-weight:700;padding:.1rem .5rem;border-radius:999px;background:#fef3c7;color:#92400e}' +
+    '.xp-q{font-size:1rem;line-height:1.65;color:#111827}.xp-q p{margin:0 0 .5rem;white-space:pre-wrap}' +
+    '.xp-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86rem;line-height:1.55;background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid rgb(176,28,35);border-radius:8px;padding:.6rem .8rem;margin:.25rem 0 .75rem;white-space:pre;overflow-x:auto;font-weight:400}' +
+    '.xp-opts{display:grid;gap:.5rem;margin-top:.25rem}.xp-opt{display:flex;gap:.7rem;align-items:flex-start;width:100%;text-align:left;border:1.5px solid #d1d5db;border-radius:10px;padding:.6rem .8rem;background:#fff;white-space:pre-wrap;font-size:.95rem}' +
+    '.xp-opt:hover:not(:disabled){border-color:rgb(176,28,35);background:#fef2f2}.xp-opt:disabled{opacity:.75}.xp-letter{flex:none;width:1.7rem;height:1.7rem;border-radius:999px;border:1.5px solid #9ca3af;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem;background:#fff}' +
+    '.xp-lines{width:100%;border:1px solid #d1d5db;border-radius:10px;padding:.35rem .75rem;font-size:.95rem;line-height:2rem;background-image:repeating-linear-gradient(transparent,transparent calc(2rem - 1px),#e5e7eb calc(2rem - 1px),#e5e7eb 2rem);background-attachment:local;background-position:0 .35rem}' +
+    '.xp-lines:focus,.xp-codebox:focus{outline:2px solid rgba(176,28,35,.35);border-color:rgb(176,28,35)}.xp-codebox{width:100%;border:1px solid #d1d5db;border-radius:10px;padding:.6rem .75rem;font-size:.86rem;background:#f8fafc}' +
+    '.xp-label{font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:.9rem 0 .3rem}' +
+    '.xp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.75rem}.xp-tools{display:flex;gap:.35rem;margin-left:auto}.xp-tool{font-size:.72rem;padding:.2rem .5rem;border:1px solid #d1d5db;border-radius:6px;color:#4b5563;background:#fff}.xp-tool:hover{background:#f9fafb}' +
+    '.xp-check{background:rgb(176,28,35);color:#fff;font-weight:700;font-size:.9rem;padding:.5rem 1.4rem;border-radius:10px}.xp-check:disabled{opacity:.55}.xp-next{font-weight:700;font-size:.9rem;padding:.5rem 1.2rem;border-radius:10px;border:1.5px solid #111827;color:#111827;background:#fff}.xp-next:hover{background:#f3f4f6}' +
+    '@media (max-width:640px){.xp-body{padding:1rem}.xp-top{padding:.7rem .9rem}}';
+  document.head.appendChild(st);
+}
+// Question text: prose stays prose; program lines (numbered or code-like) go in a code panel, like a paper.
+function hwQuestionTextHtml(text) {
+  var isCode = function (l) {
+    if (/^\d{2}\s/.test(l) || /^\s{2,}\S/.test(l)) return true;
+    return /^(if |elseif |else$|endif$|for |next |while |endwhile$|do$|until |print\(|return |switch |case |default:|endswitch$|function |endfunction$|procedure |endprocedure$|[A-Za-z_][\w.\[\]]* ?= ?[^=])/.test(l) && !/[.?]$/.test(l.trim());
+  };
+  var out = '', buf = [], mode = null;
+  var flush = function () { if (!buf.length) return; out += mode === 'code' ? '<pre class="xp-code">' + gEsc(buf.join('\n')) + '</pre>' : '<p>' + gEsc(buf.join('\n')) + '</p>'; buf = []; };
+  String(text || '').split('\n').forEach(function (l) {
+    var m = isCode(l) ? 'code' : 'text';
+    if (m !== mode) { flush(); mode = m; }
+    buf.push(l);
+  });
+  flush();
+  return out;
+}
+// The answer area for any question type. Element ids are shared with the homework screen.
+function hwAnswerHtml(q) {
+  var check = '<button type="button" id="hw-submit" class="xp-check">Check answer</button>';
+  if (q.type === 'mcq') return '<div class="xp-label">Choose one answer</div><div class="xp-opts">' + q.options.map(function (o, i) { return '<button type="button" class="hw-opt xp-opt" data-i="' + i + '"><span class="xp-letter">' + String.fromCharCode(65 + i) + '</span><span>' + gEsc(o) + '</span></button>'; }).join('') + '</div>';
+  if (q.type === 'code') return '<div class="xp-label">Your answer</div>' + hwCodeInputHtml(q);
+  if (q.type === 'table') return '<div class="xp-label">Complete the table</div>' + hwTableInputHtml(q) + '<div class="xp-actions">' + check + '</div>';
+  return '<div class="xp-label">Your answer</div><textarea id="hw-answer" rows="' + Math.max(3, Math.min(8, (Number(q.marks) || 1) + 1)) + '" class="xp-lines" placeholder="Write your answer here"></textarea><div class="xp-actions">' + check + '</div>';
+}
+function hwBindAnswer(q, root, submit) {
+  if (q.type === 'mcq') root.querySelectorAll('.hw-opt').forEach(function (b) { b.onclick = function () { root.querySelectorAll('.hw-opt').forEach(function (x) { x.disabled = true; }); b.style.borderColor = '#111827'; submit(b.dataset.i); }; });
+  else if (q.type === 'code') hwBindCodeInput(q, submit);
+  else if (q.type === 'table') gEl('hw-submit').onclick = function () {
+    var cells = hwReadTable(q); if (!cells.some(function (row) { return row.some(function (c) { return c; }); })) return;
+    gEl('hw-submit').disabled = true; document.querySelectorAll('.hw-cell').forEach(function (x) { x.disabled = true; }); submit(JSON.stringify(cells));
+  };
+  else gEl('hw-submit').onclick = function () { var a = gEl('hw-answer').value.trim(); if (!a) return; gEl('hw-submit').disabled = true; gEl('hw-answer').disabled = true; submit(a); };
+}
 function hwModal() {
+  hwCss();
   var m = gEl('modal-hw');
   if (!m) {
     m = document.createElement('div');
     m.id = 'modal-hw';
-    m.className = 'fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto';
-    m.innerHTML = '<div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mt-6"><div class="flex justify-between items-center px-5 py-3 border-b"><div><h2 class="font-bold text-lg">Homework</h2><div id="hw-sub" class="text-xs text-gray-500"></div></div><button type="button" id="hw-close" class="text-gray-400 text-xl">✕</button></div>' +
-      '<div class="px-5 pt-3"><div class="h-2 bg-gray-100 rounded"><div id="hw-bar" class="h-2 rounded bg-[rgb(176,28,35)]" style="width:0%"></div></div></div><div id="hw-body" class="p-5"></div></div>';
+    m.className = 'fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-3 sm:p-6 overflow-y-auto';
+    m.innerHTML = '<div class="xp-shell mt-2"><div class="xp-top"><div><h2>Homework</h2><div id="hw-sub" class="xp-sub"></div></div><span id="hw-count" class="xp-count"></span><button type="button" id="hw-close" class="xp-x" title="Close – your progress is saved">✕</button></div>' +
+      '<div class="xp-track"><div id="hw-bar" class="xp-bar" style="width:0%"></div></div><div id="hw-body" class="xp-body"></div></div>';
     document.body.appendChild(m);
   }
   m.classList.remove('hidden');
@@ -506,6 +564,7 @@ function hwProgressBar() {
   var S = HW.session; if (!S) return;
   var pct = Math.round((S.rec.cleared || 0) / (S.rec.size || 1) * 100);
   var bar = gEl('hw-bar'); if (bar) bar.style.width = pct + '%';
+  var c = gEl('hw-count'); if (c) c.textContent = (S.rec.cleared || 0) + ' of ' + (S.rec.size || 0) + ' done';
 }
 function hwNext() {
   var S = HW.session, rec = S.rec, body = gEl('hw-body');
@@ -519,17 +578,15 @@ function hwNext() {
   var q = hwPickQuestion(list, hwTargetLevel(t, S.bump[item.k] || 0), S.used, S.seen);
   if (!q) { rec.pos++; hwNext(); return; }
   S.q = q; S.item = item; S.used[q.id] = true;
-  var code = String(q.question).indexOf('\n') !== -1;
   var num = (rec.cleared || 0) + 1;
   S.help = { steps: hwScaffolds(q), shown: 0, auto: 0 };
-  body.innerHTML = '<div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 mb-1"><span>Question ' + Math.min(num, rec.size) + ' of ' + rec.size + ' · ' + gEsc(hwKeyLabel(item.k)) + ' · ' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + (item.r ? ' · <span class="text-amber-700">try again</span>' : '') + '</span>' +
-    '<span class="ml-auto flex gap-1"><button type="button" id="hw-read" class="px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50" title="Read the question aloud">🔊 Read aloud</button><button type="button" id="hw-easy" class="px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50" title="Bigger, more spaced text">Aa Easier reading</button></span></div>' +
-    '<div id="hw-q" class="font-semibold text-gray-800 mb-3 whitespace-pre-wrap' + (code ? ' font-mono text-sm bg-gray-50 rounded p-2' : '') + '">' + gEsc(q.question) + '</div>' +
-    '<div id="hw-help" class="mb-3"><div id="hw-help-steps" class="space-y-2"></div>' + (S.help.steps.length ? '<button type="button" id="hw-hint" class="mt-2 text-xs px-2 py-1 rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-50">💡 Need a hint? (' + S.help.steps.length + ' left)</button>' : '') + '</div>' +
-    (q.type === 'mcq' ? '<div class="grid gap-2">' + q.options.map(function (o, i) { return '<button type="button" class="hw-opt text-left px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-pre-wrap" data-i="' + i + '">' + String.fromCharCode(65 + i) + '. ' + gEsc(o) + '</button>'; }).join('') + '</div>'
-      : q.type === 'code' ? hwCodeInputHtml(q)
-      : q.type === 'table' ? hwTableInputHtml(q) + '<button type="button" id="hw-submit" class="jhncc-primary mt-2 px-4 py-1.5 rounded text-sm font-semibold">Check</button>'
-      : '<textarea id="hw-answer" rows="3" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="Type your answer"></textarea><button type="button" id="hw-submit" class="jhncc-primary mt-2 px-4 py-1.5 rounded text-sm font-semibold">Check</button>') +
+  body.innerHTML = '<div class="xp-head"><span class="xp-num">Question ' + Math.min(num, rec.size) + '</span><span class="xp-topic">of ' + rec.size + ' · ' + gEsc(hwKeyLabel(item.k)) + '</span>' + (item.r ? '<span class="xp-chip">try again</span>' : '') +
+    '<span class="xp-marks">[' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + ']</span></div>' +
+    '<div id="hw-q" class="xp-q">' + hwQuestionTextHtml(q.question) + '</div>' +
+    '<div id="hw-help" class="mb-1"><div id="hw-help-steps" class="space-y-2"></div></div>' +
+    hwAnswerHtml(q) +
+    '<div class="xp-actions">' + (S.help.steps.length ? '<button type="button" id="hw-hint" class="xp-tool" style="border-color:#93c5fd;color:#1e40af">💡 Need a hint? (' + S.help.steps.length + ' left)</button>' : '') +
+    '<span class="xp-tools"><button type="button" id="hw-read" class="xp-tool" title="Read the question aloud">🔊 Read aloud</button><button type="button" id="hw-easy" class="xp-tool" title="Bigger, more spaced text">Aa Easier reading</button></span></div>' +
     '<div id="hw-result" class="mt-3"></div>';
   hwEasyRead(hwEasyReadOn());
   gEl('hw-easy').onclick = function () { hwEasyRead(!hwEasyReadOn()); };
@@ -540,23 +597,18 @@ function hwNext() {
   S.help.auto = S.help.shown;
   if (gEl('hw-hint')) gEl('hw-hint').onclick = function () { hwShowStep(S.help.shown); };
   hwStartTracking();
-  if (q.type === 'mcq') body.querySelectorAll('.hw-opt').forEach(function (b) { b.onclick = function () { body.querySelectorAll('.hw-opt').forEach(function (x) { x.disabled = true; }); hwSubmit(b.dataset.i); }; });
-  else if (q.type === 'code') hwBindCodeInput(q);
-  else if (q.type === 'table') gEl('hw-submit').onclick = function () {
-    var cells = hwReadTable(); if (!cells.some(function (row) { return row.some(function (c) { return c; }); })) return;
-    gEl('hw-submit').disabled = true; document.querySelectorAll('.hw-cell').forEach(function (x) { x.disabled = true; }); hwSubmit(JSON.stringify(cells));
-  };
-  else gEl('hw-submit').onclick = function () { var a = gEl('hw-answer').value.trim(); if (!a) return; gEl('hw-submit').disabled = true; gEl('hw-answer').disabled = true; hwSubmit(a); };
+  hwBindAnswer(q, body, hwSubmit);
 }
 // ── Code and table questions ────────────────────────────────────────────────
 function hwCodeInputHtml(q) {
-  return '<div class="text-xs text-gray-500 mb-1">Write your answer in Python or in OCR Exam Reference Language – both are accepted. Your program is checked by running it with test inputs.</div>' +
-    '<textarea id="hw-answer" rows="' + Math.max(8, String(q.starterCode || '').split('\n').length + 2) + '" spellcheck="false" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono" placeholder="Write your code here">' + gEsc(q.starterCode || '') + '</textarea>' +
-    '<div class="flex flex-wrap items-center gap-2 mt-2"><button type="button" id="hw-submit" class="jhncc-primary px-4 py-1.5 rounded text-sm font-semibold">Check</button>' +
-    '<span class="text-xs text-gray-500 ml-2">Try it first:</span><input id="hw-try-in" class="border border-gray-300 rounded px-2 py-1 text-xs w-40" placeholder="inputs, e.g. 3, 4"><button type="button" id="hw-try" class="px-2 py-1 rounded border border-gray-300 text-xs">▶ Run</button></div>' +
+  return '<div class="text-xs text-gray-500 mb-1">Write it in Python or in OCR Exam Reference Language – both are accepted. Your program is checked by running it with test inputs.</div>' +
+    '<textarea id="hw-answer" rows="' + Math.max(8, String(q.starterCode || '').split('\n').length + 2) + '" spellcheck="false" class="xp-codebox font-mono" placeholder="Write your code here">' + gEsc(q.starterCode || '') + '</textarea>' +
+    '<div class="xp-actions"><button type="button" id="hw-submit" class="xp-check">Check answer</button>' +
+    '<span class="text-xs text-gray-500 ml-2">Try it first:</span><input id="hw-try-in" class="border border-gray-300 rounded px-2 py-1 text-xs w-40" placeholder="inputs, e.g. 3, 4"><button type="button" id="hw-try" class="xp-tool">▶ Run</button></div>' +
     '<pre id="hw-try-out" class="hidden mt-2 text-xs bg-gray-900 text-green-200 rounded p-2 whitespace-pre-wrap"></pre>';
 }
-function hwBindCodeInput(q) {
+function hwBindCodeInput(q, submit) {
+  submit = submit || hwSubmit;
   var ta = gEl('hw-answer');
   ta.onkeydown = function (e) {
     if (e.key !== 'Tab') return;
@@ -572,7 +624,7 @@ function hwBindCodeInput(q) {
   };
   gEl('hw-submit').onclick = function () {
     var a = ta.value; if (!a.trim() || a === (q.starterCode || '')) return;
-    gEl('hw-submit').disabled = true; ta.disabled = true; gEl('hw-submit').textContent = 'Testing…'; hwSubmit(a);
+    gEl('hw-submit').disabled = true; ta.disabled = true; gEl('hw-submit').textContent = 'Testing…'; submit(a);
   };
 }
 function hwTableInputHtml(q, opts) {
@@ -581,7 +633,7 @@ function hwTableInputHtml(q, opts) {
   return '<div class="overflow-x-auto"><table class="hw-table text-sm border-collapse"><tr>' + tb.head.map(function (h) { return '<th class="border border-gray-300 bg-gray-50 px-2 py-1 font-semibold">' + gEsc(h) + '</th>'; }).join('') + '</tr>' +
     tb.rows.map(function (row, i) {
       return '<tr>' + row.map(function (c, j) {
-        if (!(tb.blanks[i] || [])[j]) return '<td class="border border-gray-300 px-2 py-1 text-center font-mono">' + gEsc(c) + '</td>';
+        if (!(tb.blanks[i] || [])[j]) return '<td class="border border-gray-300 px-2 py-1 ' + (String(c).split(' ').length > 4 ? 'text-left' : 'text-center font-mono') + '">' + gEsc(c) + '</td>';
         var val = opts.values ? ((opts.values[i] || [])[j] || '') : '';
         var mark = opts.marked ? opts.marked[i][j] : null;
         return '<td class="border border-gray-300 p-0.5' + (mark === true ? ' bg-green-50' : mark === false ? ' bg-red-50' : '') + '">' +
@@ -590,8 +642,9 @@ function hwTableInputHtml(q, opts) {
       }).join('') + '</tr>';
     }).join('') + '</table></div>';
 }
-function hwReadTable() {
-  var tb = (HW.session.q && HW.session.q.table) || { rows: [] };
+function hwReadTable(q) {
+  q = q || (HW.session && HW.session.q) || {};
+  var tb = q.table || { rows: [] };
   var cells = tb.rows.map(function (row) { return row.map(function () { return ''; }); });
   document.querySelectorAll('.hw-cell').forEach(function (inp) { cells[Number(inp.dataset.r)][Number(inp.dataset.c)] = inp.value.trim(); });
   return cells;
@@ -658,7 +711,7 @@ async function hwSubmit(answer) {
   if (gEl('hw-hint')) gEl('hw-hint').disabled = true;
   if (gEl('hw-submit')) gEl('hw-submit').textContent = 'Checked';
   if (gEl('hw-try')) gEl('hw-try').disabled = true;
-  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<button type="button" id="hw-next" class="mt-3 px-4 py-1.5 rounded border border-gray-300 text-sm font-semibold">Next →</button>';
+  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<div class="xp-actions"><button type="button" id="hw-next" class="xp-next">Next question →</button></div>';
   hwProgressBar();
   gEl('hw-next').onclick = hwNext;
 }
