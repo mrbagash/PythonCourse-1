@@ -184,6 +184,7 @@ function hwFeedbackHtml(q, answer, res) {
     dg.misc.forEach(function (m) { h += hwMiscHtml(m); });
     if (dg.missing.length) h += '<div class="hw-missing"><span class="font-semibold">' + (dg.missingAny ? 'To get the mark' + (dg.missingAny > 1 ? 's' : '') + ' you needed ' + (dg.missingAny > 1 ? 'any ' + dg.missingAny : 'one') + ' of these:' : 'What you still needed:') + '</span><ul class="list-disc ml-5">' + dg.missing.map(function (l) { return '<li>' + gEsc(l) + '</li>'; }).join('') + '</ul></div>';
     if (dg.working) h += '<div class="hw-working rounded border border-amber-200 bg-white p-2"><div class="font-semibold">How to work it out</div><div class="mt-1">' + dg.working + '</div></div>';
+    else if (q.model && q.type !== 'code') h += '<div class="hw-model rounded border border-amber-200 bg-white p-2"><div class="font-semibold">A full-mark answer</div><div class="mt-1 whitespace-pre-wrap">' + gEsc(q.model) + '</div></div>';
     else if (q.markScheme && !(dg.missing.length === 1 && String(q.markScheme).replace(/\s*\(\d\)/g, '').trim() === dg.missing[0])) h += '<div class="hw-model rounded border border-amber-200 bg-white p-2"><div class="font-semibold">A full-mark answer</div><div class="mt-1 whitespace-pre-wrap">' + gEsc(String(q.markScheme).replace(/\s*\(\d\)/g, '')) + '</div></div>';
   }
   h += '<div class="text-xs text-amber-800">A similar question will come back later in this homework.</div></div>';
@@ -217,6 +218,7 @@ var HW_SUPPORT = [{ id: 0, label: 'None', auto: 0 }, { id: 1, label: 'Some help'
 function hwHashPick(id, n) { var h = 0; String(id).split('').forEach(function (c) { h = (h * 31 + c.charCodeAt(0)) >>> 0; }); return n ? h % n : 0; }
 function hwReminderFor(q) {
   var t = (q.topics || [])[0] || '', sk = q.skill || '';
+  if (q.hint) return q.hint;   // the teacher's own hint (bank sheet "Hint" column) comes first
   if (typeof GCSE_REMIND === 'undefined') return '';
   return GCSE_REMIND[t + '~' + sk] || GCSE_REMIND[t] || '';
 }

@@ -514,7 +514,8 @@ var GcseCore = (function () {
   }
 
   // ── Question bank validation ────────────────────────────────
-  var BANK_HEADERS = ['ID', 'Paper', 'Topics', 'Command word', 'Marks', 'Type', 'Question', 'Options', 'Answer', 'Mark scheme', 'Marking rules', 'Test answers', 'Source', 'Reworded from', 'Difficulty', 'Feedback codes'];
+  var BANK_HEADERS = ['ID', 'Paper', 'Topics', 'Command word', 'Marks', 'Type', 'Question', 'Options', 'Answer', 'Mark scheme', 'Marking rules', 'Test answers', 'Source', 'Reworded from', 'Difficulty', 'Feedback codes',
+    'Model answer', 'Wrong option notes', 'Hint', 'Code tests', 'Starter code', 'Table', 'Indicative content'];
   // "F" / "Foundation" → F, "H" / "Higher" → H, anything else → '' (both tiers)
   function normaliseDifficulty(v) {
     var x = String(v || '').trim().toLowerCase();
@@ -524,9 +525,82 @@ var GcseCore = (function () {
   }
   var BANK_TYPES = ['mcq', 'short', 'long', 'paper', 'code', 'table'];
 
+  // ── Extra bank columns (all optional) ───────────────────────
+  // "Wrong option notes": why each wrong option is wrong – "A: … | C: …" or one per option in order, separated by |.
+  function parseWhyNotes(text, nOptions) {
+    var out = [], parts = String(text || '').split('|').map(function (p) { return p.trim(); });
+    if (!String(text || '').trim()) return out;
+    var lettered = parts.some(function (p) { return /^[A-Ha-h]\s*[:\-–]\s*\S/.test(p); });
+    parts.forEach(function (p, i) {
+      var m = p.match(/^([A-Ha-h])\s*[:\-–]\s*(.+)$/);
+      if (lettered) { if (m) out[m[1].toUpperCase().charCodeAt(0) - 65] = m[2].trim(); }
+      else out[i] = p;
+    });
+    for (var k = 0; k < Math.max(nOptions || 0, out.length); k++) if (out[k] == null) out[k] = '';
+    return out;
+  }
+  // "Code tests": one test per line, "inputs -> expected output". Inputs are separated by commas
+  // (none before the arrow = no input). Write \n inside the output for a new line.
+  function parseCodeTests(text) {
+    var tests = [], errors = [];
+    String(text || '').split(/\n/).forEach(function (line, i) {
+      if (!line.trim()) return;
+      var k = line.indexOf('->');
+      if (k === -1) { errors.push('Code tests line ' + (i + 1) + ': write it as "inputs -> expected output" (e.g. "3, 4 -> 7")'); return; }
+      var ins = line.slice(0, k).trim(), out = line.slice(k + 2).trim().replace(/\\n/g, '\n');
+      if (!out) { errors.push('Code tests line ' + (i + 1) + ': nothing after the arrow – what should the program print?'); return; }
+      tests.push({ in: ins ? ins.split(',').map(function (x) { return x.trim(); }) : [], out: out, exact: false });
+    });
+    return { tests: tests, errors: errors };
+  }
+  // "Table": first line = column headings, then one line per row; cells separated by |.
+  // A cell starting with ? is a box for the pupil; what follows is the answer ("?5", or "?true/1" for either).
+  function parseTableCell(text) {
+    var lines = String(text || '').split(/\n/).filter(function (l) { return l.trim(); });
+    var errors = [];
+    if (!lines.length) return { table: null, answers: null, errors: errors };
+    var split = function (l) { return l.split('|').map(function (c) { return c.trim(); }); };
+    var head = split(lines[0]), cells = lines.slice(1).map(split);
+    cells.forEach(function (row, i) { if (row.length !== head.length) errors.push('Table row ' + (i + 1) + ' has ' + row.length + ' cells but the heading row has ' + head.length); });
+    var isBox = function (c) { return c.charAt(0) === '?'; };
+    return {
+      table: { head: head, rows: cells.map(function (row) { return row.map(function (c) { return isBox(c) ? '' : c; }); }), blanks: cells.map(function (row) { return row.map(isBox); }) },
+      answers: cells.map(function (row) { return row.map(function (c) { return isBox(c) ? c.slice(1).trim().replace(/\s*\/\s*/g, '|') : ''; }); }),
+      errors: errors
+    };
+  }
+  // Add the extra columns to a row read from the sheet (only what is filled in).
+  function addBankExtras(r, get) {
+    var errs = [];
+    var model = get('Model answer'), hint = get('Hint'), starter = get('Starter code');
+    if (model) r.model = model;
+    if (hint) r.hint = hint;
+    if (starter) r.starterCode = starter;
+    var why = parseWhyNotes(get('Wrong option notes'), r.options.length);
+    if (why.length) r.why = why;
+    var ct = parseCodeTests(get('Code tests'));
+    errs = errs.concat(ct.errors);
+    if (ct.tests.length) r.codeTests = ct.tests;
+    var tb = parseTableCell(get('Table'));
+    errs = errs.concat(tb.errors);
+    if (tb.table) { r.table = tb.table; r.answers = tb.answers; }
+    var ind = get('Indicative content').split(/\n/).map(function (l) { return l.replace(/^\s*[•\-*]\s*/, '').trim(); }).filter(Boolean);
+    if (ind.length) r.indicative = ind;
+    // A mark scheme is written for you when the other columns already say what earns the marks.
+    if (!r.markScheme) {
+      if (r.type === 'code' && r.codeTests) r.markScheme = 'Marked by running the program against ' + r.codeTests.length + ' test' + (r.codeTests.length === 1 ? '' : 's') + '.\nTests:\n' +
+        r.codeTests.map(function (t) { return '• input ' + (t.in.length ? t.in.join(', ') : '(none)') + ' → output ' + t.out.replace(/\n/g, ' / '); }).join('\n') + (r.model ? '\nExample answer:\n' + r.model : '');
+      else if (r.type === 'table' && r.table) r.markScheme = r.table.head.join(' | ') + '\n' + r.table.rows.map(function (row, i) { return row.map(function (c, j) { return r.table.blanks[i][j] ? '[' + String(r.answers[i][j]).split('|')[0] + ']' : (c || '–'); }).join(' | '); }).join('\n');
+      else if (r.type === 'long' && r.indicative) r.markScheme = 'Indicative content (credit other valid points):\n' + r.indicative.map(function (p) { return '• ' + p; }).join('\n');
+      else if (r.model && (r.type === 'long' || r.type === 'short')) r.markScheme = r.model;
+    }
+    if (errs.length) r.cellErrors = errs;
+    return r;
+  }
+
   function bankRowFromCells(cells, headerIdx) {
     function get(name) { var i = headerIdx[name.toLowerCase()]; return i == null ? '' : String(cells[i] == null ? '' : cells[i]).trim(); }
-    return {
+    return addBankExtras({
       id: get('ID'), paper: get('Paper'), topics: get('Topics').split(/[;,\s]+/).filter(Boolean),
       command: get('Command word'), marks: Number(get('Marks')), type: get('Type').toLowerCase(),
       question: get('Question'), options: get('Options').split('|').map(function (o) { return o.trim(); }).filter(Boolean),
@@ -534,7 +608,7 @@ var GcseCore = (function () {
       source: get('Source'), rewordedFrom: get('Reworded from'),
       difficulty: normaliseDifficulty(get('Difficulty')),
       codes: get('Feedback codes').split(/[\s,;]+/).map(function (c) { return c.trim().toUpperCase(); }).filter(Boolean)
-    };
+    }, get);
   }
 
   // rows: array of bank row objects; returns per-row {live, quizUsable, errors, testResults}
@@ -548,6 +622,7 @@ var GcseCore = (function () {
       if (!(r.marks > 0)) errors.push('Missing marks');
       if (BANK_TYPES.indexOf(r.type) === -1) errors.push('Type must be mcq, short, long, paper, code or table');
       if (!r.topics.length) errors.push('Missing topic');
+      (r.cellErrors || []).forEach(function (e) { errors.push(e); });
       r.difficulty = normaliseDifficulty(r.difficulty);
       (r.codes || []).forEach(function (c) { if (J && J.feedbackCode && !J.feedbackCode(c)) errors.push('Unknown feedback code ' + c); });
       r.topics = r.topics.map(function (t) { return J ? J.normaliseCode(t) : t; });
@@ -585,15 +660,15 @@ var GcseCore = (function () {
       }
       if (r.type === 'code') {
         var ct = Array.isArray(r.codeTests) ? r.codeTests : [];
-        if (!ct.length) errors.push('Code questions need test cases (inputs → expected output)');
+        if (!ct.length) errors.push('Code questions need test cases – fill in the "Code tests" column (inputs -> expected output)');
         ct.forEach(function (t, k) { if (!t || t.out == null || String(t.out).trim() === '') errors.push('Test ' + (k + 1) + ' has no expected output'); });
-        if (!r.model) errors.push('Code questions need a model answer');
+        if (!r.model) errors.push('Code questions need a model answer – fill in the "Model answer" column');
       }
       if (r.type === 'table') {
         var tb = r.table || {};
         var blanks = (tb.blanks || []).reduce(function (n, row) { return n + row.filter(Boolean).length; }, 0);
-        if (!tb.head || !tb.rows || !tb.rows.length) errors.push('Table questions need a header and rows');
-        else if (!blanks) errors.push('Table questions need at least one box to fill in');
+        if (!tb.head || !tb.rows || !tb.rows.length) errors.push('Table questions need the "Table" column: a heading line, then one line per row');
+        else if (!blanks) errors.push('Table questions need at least one box to fill in – start a cell with ? (e.g. ?5)');
         if (!Array.isArray(r.answers) || r.answers.length !== (tb.rows || []).length) errors.push('Table answers do not match the rows');
       }
       if ((r.type === 'long' || r.type === 'short') && !r.markScheme) errors.push('Needs a mark scheme');
@@ -608,7 +683,7 @@ var GcseCore = (function () {
     gradeFor: gradeFor, gradeLabel: gradeLabel, defaultBoundaries: defaultBoundaries, DEFAULT_BOUNDARY_SOURCE: DEFAULT_BOUNDARY_SOURCE,
     componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf,
     suggestFeedbackCodes: suggestFeedbackCodes, markTable: markTable, cellMatches: cellMatches, suggestBandMark: suggestBandMark, normaliseDifficulty: normaliseDifficulty, asList: asList, suggestLongMark: suggestLongMark, parseGrade: parseGrade, suggestDp: suggestDp,
-    BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, bankRowFromCells: bankRowFromCells, validateBank: validateBank
+    BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, parseWhyNotes: parseWhyNotes, parseCodeTests: parseCodeTests, parseTableCell: parseTableCell, bankRowFromCells: bankRowFromCells, validateBank: validateBank
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = GcseCore;

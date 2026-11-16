@@ -66,6 +66,10 @@ async function plcOpen() {
   if (!Object.keys(topics).length) Object.keys(scores).forEach(function (s) { topics[s] = true; });   // fallback: topics from released tests
   plcDraw(body, Object.keys(topics), snaps[1], scores);
 }
+// Where the pupil's released test marks put a topic (null = not tested yet). Same bands as the test checklist.
+var PLC_BANDS = { secure: { icon: '✅', label: 'Secure' }, nearly: { icon: '🟡', label: 'Nearly there' }, notyet: { icon: '❌', label: 'Not yet' } };
+function plcBand(sc) { return !sc || sc.pct == null ? null : sc.pct >= 70 ? 'secure' : sc.pct >= 40 ? 'nearly' : 'notyet'; }
+function plcTopicName(tc) { return typeof gTopicName === 'function' ? gTopicName(tc) : J277.label(tc); }
 function plcDraw(body, topics, ratings, scores) {
   if (!topics.length) { body.innerHTML = '<p class="text-sm text-gray-500 py-4">Your teacher has not marked any topics as taught yet. Check back later.</p>'; return; }
   topics.sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
@@ -75,6 +79,14 @@ function plcDraw(body, topics, ratings, scores) {
   var over = topics.filter(function (tc) { var r = ratings[plcKey(tc)]; return plcMismatch(r && r.r, scores[tc] ? scores[tc].pct : null) === 'over'; });
   var h = '<div class="flex flex-wrap items-center gap-3 mb-3 text-sm"><span><b>' + rated + ' / ' + topics.length + '</b> rated</span>' +
     Object.keys(PLC).map(function (k) { return '<span class="text-xs px-2 py-0.5 rounded" style="background:' + PLC[k].bg + ';color:' + PLC[k].fg + '">' + PLC[k].label + ' ' + topics.filter(function (tc) { var r = ratings[plcKey(tc)]; return r && r.r === k; }).length + '</span>'; }).join('') + '</div>';
+  // What the tests say – three bands and at most three things to work on next.
+  var count = { secure: 0, nearly: 0, notyet: 0, none: 0 };
+  topics.forEach(function (tc) { count[plcBand(scores[tc]) || 'none']++; });
+  var next = topics.filter(function (tc) { var b = plcBand(scores[tc]); return b === 'nearly' || b === 'notyet'; }).sort(function (a, b) { return scores[a].pct - scores[b].pct; }).slice(0, 3);
+  h = '<div class="plc-summary rounded border border-gray-200 p-3 mb-3"><div class="text-sm"><b>From your tests:</b> ✅ ' + count.secure + ' secure · 🟡 ' + count.nearly + ' nearly there · ❌ ' + count.notyet + ' not yet' + (count.none ? ' · <span class="text-gray-500">' + count.none + ' not tested yet</span>' : '') + '</div>' +
+    (next.length ? '<div class="font-semibold text-sm mt-2">Work on these next</div><ol class="text-sm space-y-1 mt-1">' + next.map(function (tc, i) {
+      return '<li class="plc-next flex flex-wrap items-center gap-2"><span><b>' + (i + 1) + '.</b> ' + gEsc(plcTopicName(tc)) + '</span><button type="button" class="plc-practise ml-auto px-3 py-1 rounded border border-gray-300 text-xs font-semibold" data-topic="' + gEsc(tc) + '">Practise this</button></li>';
+    }).join('') + '</ol>' : (count.secure ? '<div class="text-sm text-green-800 mt-1">Every topic you have been tested on is secure.</div>' : '')) + '</div>' + h;
   if (over.length) h += '<div class="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 mb-3"><b>Double-check these:</b> you feel confident but scored under 50% in tests – ' + over.map(function (tc) { return gEsc(J277.label(tc)); }).join(', ') + '.</div>';
   h += Object.keys(groups).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).map(function (g) {
     var n = J277.get(g);
@@ -82,7 +94,7 @@ function plcDraw(body, topics, ratings, scores) {
       var r = ratings[plcKey(tc)], cur = r && r.r, sc = scores[tc];
       var mm = plcMismatch(cur, sc ? sc.pct : null);
       return '<div class="plc-row flex flex-wrap items-center gap-2 py-1 border-b border-gray-100" data-topic="' + gEsc(tc) + '"><span class="flex-1 min-w-[200px] text-sm">' + gEsc(J277.label(tc)) + '</span>' +
-        (sc && sc.pct != null ? '<span class="text-xs px-1.5 rounded" style="' + gRag(sc.pct) + '" title="Your released test marks on this topic">Tests ' + sc.pct + '%</span>' : '<span class="text-xs text-gray-400">no test yet</span>') +
+        (sc && sc.pct != null ? '<span class="plc-band text-xs px-1.5 rounded" style="' + gRag(sc.pct) + '" title="Your released test marks on this topic: ' + sc.pct + '%">' + PLC_BANDS[plcBand(sc)].icon + ' ' + PLC_BANDS[plcBand(sc)].label + '</span>' : '<span class="text-xs text-gray-400">not tested yet</span>') +
         (mm === 'over' ? '<span class="text-[11px] text-amber-800">check this one</span>' : '') +
         '<div class="flex gap-1">' + Object.keys(PLC).map(function (k) {
           var on = cur === k;
@@ -91,6 +103,12 @@ function plcDraw(body, topics, ratings, scores) {
     }).join('') + '</div>';
   }).join('');
   body.innerHTML = h;
+  body.querySelectorAll('.plc-practise').forEach(function (b) {
+    var qs = [];
+    try { qs = gcseQuestionsForTopics([b.dataset.topic], ['mcq', 'short']).map(gcsePracticeItem); } catch (e) { qs = []; }
+    if (!qs.length) { b.outerHTML = '<span class="ml-auto text-xs text-gray-500">Revise this from your notes</span>'; return; }
+    b.onclick = function () { var m = gEl('modal-plc'); if (m) m.classList.add('hidden'); gcseStartPractice(qs, plcTopicName(b.dataset.topic)); };
+  });
   body.querySelectorAll('.plc-rate').forEach(function (b) {
     b.onclick = async function () {
       var tc = b.dataset.topic, k = plcKey(tc);

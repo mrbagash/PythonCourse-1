@@ -5,17 +5,19 @@
  * that affect most pupils, show what good looks like, make pupils ACT on the
  * feedback, test transfer on a new question, and check it stuck later.
  *
- *  1 Analyse  – misconceptions (feedback codes) by number of pupils, what went
- *               well with anonymised best answers, not-attempted kept separate.
- *  2 Plan     – at most 3 focuses: explanation, model answer, a NEW transfer
- *               question and a later check question; pupils sorted into
- *               secure (stretch) / misconception (correct it) / big gap
- *               (worked example first).
- *  3 Deliver  – presenter view (no names) and a printable WCF sheet.
- *  4 Act      – pupils: see their answer → correct it → say why it was wrong
- *               → answer the new question. Grade shown after the tasks.
- *               Teachers: Actions tab.
- *  5 Check    – 14 days later one question per focus; Impact line.
+ *  Research this follows (EEF "Teacher Feedback to Improve Pupil Learning" 2021;
+ *  Hattie & Timperley 2007; Kluger & DeNisi 1996; Butler 1988; Sweller):
+ *   - few things at once: at most 3 "went well", 3 focuses, 3 next steps;
+ *   - feedback is about the task and what to do next, never the pupil;
+ *   - pupils must DO something with it (correct → explain → new question);
+ *   - a grade shown with feedback pulls attention off the feedback, so grades
+ *     can wait until the tasks are done;
+ *   - a later check (14 days) shows whether it stuck.
+ *
+ *  1 Review       – went well / fix these / not attempted. Detail is folded away.
+ *  2 Plan & teach – edit the (pre-filled) focuses, present with no names, print.
+ *  3 Pupils fix   – release; pupils correct it → say why → answer a new question;
+ *                   14 days later one check question per focus. Actions tab.
  *
  * Data (codes only, never names):
  *   gcse/wcf/{testId}                          the plan (staff only)
@@ -70,23 +72,26 @@ function wcfAnalyse(t, rows) {
   return { sat: sat, misconceptions: misconceptions, best: best, stats: stats, notAttempted: notAttempted, wrongCount: wrongCount };
 }
 
-function wcfAnalyseHtml(t, A) {
-  var n = A.sat.length;
-  var h = '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">';
-  h += '<div class="lg:col-span-2 border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">Misconceptions <span class="text-xs font-normal text-gray-500">(from the feedback codes on marked answers – most pupils first)</span></h4>' +
-    (A.misconceptions.length ? '<table class="w-full text-sm"><tr class="text-xs text-gray-500 text-left"><th class="p-1">Code</th><th class="p-1">Misconception</th><th class="p-1 text-center">Pupils</th><th class="p-1">Questions</th></tr>' +
-      A.misconceptions.slice(0, 8).map(function (C) {
-        return '<tr class="border-t"><td class="p-1"><span class="px-1.5 rounded bg-amber-100 text-amber-900 font-bold text-xs">' + wEsc(C.id) + '</span></td><td class="p-1">' + wEsc(C.info ? C.info.text : '') + '</td>' +
-          '<td class="p-1 text-center"><b>' + C.n + '</b> <span class="text-xs text-gray-500">of ' + n + '</span></td><td class="p-1 text-xs">' + wEsc(C.qids.join(', ')) + '</td></tr>';
-      }).join('') + '</table>' : '<p class="text-sm text-gray-500">No feedback codes yet. Codes are suggested automatically on online tests and you can add them in <b>Mark answers</b>. Topics below still show where marks were lost.</p>') + '</div>';
-  h += '<div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold text-gray-800 mb-2">What went well</h4><ul class="text-sm list-disc ml-5">' +
-    (A.stats.best.length ? A.stats.best.map(function (T) { return '<li>' + wEsc(T.label) + ' (' + T.pct + '%)</li>'; }).join('') : '<li>–</li>') + '</ul>' +
-    (A.best.length ? '<div class="text-xs text-gray-500 mt-2 mb-1">Full-mark answers (anonymised – use as examples):</div>' + A.best.slice(0, 2).map(function (b) {
-      return '<div class="text-xs bg-green-50 border border-green-200 rounded p-2 mb-1"><b>' + wEsc(b.qid) + '</b> ' + wEsc(b.text.slice(0, 220)) + '</div>';
-    }).join('') : '') +
-    (A.notAttempted.length ? '<h4 class="font-bold text-gray-800 mt-3 mb-1 text-sm">Not attempted <span class="text-xs font-normal text-gray-500">(time / exam technique, not knowledge)</span></h4><div class="text-xs">' +
-      A.notAttempted.slice(0, 5).map(function (q) { return wEsc(q.id) + ': ' + q.n; }).join(' · ') + '</div>' : '') + '</div></div>';
-  return h;
+function wcfNeedCount(f) { return Object.keys(f.tiers || {}).filter(function (c) { return f.tiers[c] !== 'secure'; }).length; }
+// The whole Review step: three boxes, at most three things in each.
+function wcfAnalyseHtml(t, A, plan) {
+  var n = A.sat.length, st = A.stats;
+  var box = function (cls, title, sub, body) { return '<div class="wcf-box border rounded-lg p-3 ' + cls + '"><h4 class="font-bold text-gray-800">' + title + '</h4><div class="text-xs text-gray-500 mb-2">' + sub + '</div>' + body + '</div>'; };
+  var www = st.best.length ? '<ul class="text-sm space-y-1">' + st.best.map(function (T) { return '<li>✅ ' + wEsc(gTopicName(T.code)) + ' <span class="text-xs text-gray-500">' + T.pct + '%</span></li>'; }).join('') + '</ul>'
+    : '<p class="text-sm text-gray-600">No topic is at 70% yet.' + (st.top && st.top.pct > 0 ? ' Strongest so far: <b>' + wEsc(gTopicName(st.top.code)) + '</b> (' + st.top.pct + '%).' : '') + '</p>';
+  if (A.best[0]) www += '<div class="text-xs text-gray-500 mt-2 mb-1">A full-mark answer to show the class (no name):</div><div class="text-xs bg-green-50 border border-green-200 rounded p-2"><b>' + wEsc(A.best[0].qid) + '</b> ' + wEsc(A.best[0].text.slice(0, 220)) + '</div>';
+  var fix = plan.focuses.length ? '<ol class="text-sm space-y-2">' + plan.focuses.slice(0, 3).map(function (f, i) {
+    return '<li class="wcf-fix"><div><b>' + (i + 1) + '. ' + wEsc(f.title) + '</b></div><div class="text-xs text-gray-600">' + wcfNeedCount(f) + ' of ' + n + ' pupils need this · ' + wEsc(f.qids.join(', ')) + '</div>' +
+      '<div class="text-xs mt-0.5">' + (f.model ? '<span class="text-green-700">✓ model answer</span>' : '<span class="text-amber-700">no model answer yet</span>') + ' · ' + (f.transfer ? '<span class="text-green-700">✓ new question</span>' : '<span class="text-amber-700">no new question yet</span>') + '</div></li>';
+  }).join('') + '</ol>' : '<p class="text-sm text-gray-600">Nothing to fix – no marks were lost.</p>';
+  fix += '<button type="button" class="wcf-step mt-3 jhncc-primary px-3 py-1.5 rounded text-sm font-semibold" data-step="plan">' + (plan.focuses.length ? 'Check the plan and teach it →' : 'Add a focus →') + '</button>';
+  var blank = A.notAttempted.filter(function (q) { return q.n >= Math.max(2, n * 0.2); }).slice(0, 3);
+  var na = blank.length ? '<ul class="text-sm space-y-1">' + blank.map(function (q) { return '<li><b>' + wEsc(q.id) + '</b> – ' + q.n + ' of ' + n + ' left it blank</li>'; }).join('') + '</ul><p class="text-xs text-gray-500 mt-2">Usually timing or exam technique, not knowledge.</p>'
+    : '<p class="text-sm text-gray-600">No question was left blank by many pupils.</p>';
+  return '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-2">' +
+    box('border-green-200', 'Went well', 'Topics the class has secured (70%+)', www) +
+    box('border-amber-300', 'Fix these', 'What will help most pupils – 3 at most', fix) +
+    box('border-gray-200', 'Not attempted', 'Questions many pupils left blank', na) + '</div>';
 }
 
 // ── 2. Plan ─────────────────────────────────────────────────────────────────
@@ -100,7 +105,7 @@ function wcfCandidates(t, A) {
   A.stats.reteach.forEach(function (T) {
     var qids = (t.questions || []).filter(function (q) { return (q.topics || []).indexOf(T.code) !== -1; }).map(function (q) { return q.id; });
     var n = A.sat.filter(function (r) { var p = T.per[r.code]; return p && p.a < p.p; }).length;
-    out.push({ key: 'topic:' + T.code, code: null, topic: T.code, title: J277.label(T.code), n: n, qids: qids });
+    out.push({ key: 'topic:' + T.code, code: null, topic: T.code, title: gTopicName(T.code), n: n, qids: qids });
   });
   return out;
 }
@@ -129,6 +134,19 @@ function wcfTiers(t, focus, rows) {
   });
   return tiers;
 }
+// What went wrong: the named misconception, then the teacher's own "common mistake" note for those questions.
+function wcfExplainFor(t, cand, info) {
+  var notes = (cand.qids || []).map(function (id) { return (t.notes || {})[id]; }).filter(Boolean).filter(function (x, i, a) { return a.indexOf(x) === i; });
+  var base = info ? info.text : '';
+  if (notes.length) return (base ? base + ' ' : '') + 'Common mistake: ' + notes.slice(0, 2).join('; ').replace(/\.$/, '') + '.';
+  return base || 'Revisit ' + gTopicName(cand.topic) + '.';
+}
+// What good looks like: the model answer if the question has one, else its mark scheme.
+function wcfModelFor(t, cand) {
+  var qs = (t.questions || []).filter(function (q) { return (cand.qids || []).indexOf(q.id) !== -1; });
+  var q = qs.filter(function (x) { return x.model; })[0] || qs.filter(function (x) { return x.markScheme; })[0] || {};
+  return q.model || q.markScheme || '';
+}
 function wcfNewFocus(t, cand, rows, idx) {
   var q0 = (t.questions || []).filter(function (q) { return cand.qids.indexOf(q.id) !== -1; })[0] || {};
   var info = cand.code ? J277.feedbackCode(cand.code) : null;
@@ -136,8 +154,8 @@ function wcfNewFocus(t, cand, rows, idx) {
   var f = {
     id: 'f' + (idx + 1) + '_' + Date.now().toString(36).slice(-4), key: cand.key, code: cand.code, topic: cand.topic, qids: cand.qids,
     title: cand.code ? cand.code + ' – ' + (info ? info.text : '') : cand.title,
-    explain: info ? info.text : 'Revisit ' + J277.label(cand.topic) + '.',
-    model: q0.markScheme || '',
+    explain: wcfExplainFor(t, cand, info),
+    model: wcfModelFor(t, cand),
     transfer: choices[0] || null, check: choices[1] || choices[0] || null
   };
   f.tiers = wcfTiers(t, f, rows);
@@ -163,11 +181,11 @@ async function wcfSavePlan(testId, plan) {
 }
 
 function wcfStepper(step, released) {
-  var steps = [['analyse', '1 Analyse'], ['plan', '2 Plan'], ['deliver', '3 Deliver'], ['act', '4 Pupils act'], ['check', '5 Check it stuck']];
+  var steps = [['analyse', '1 Review'], ['plan', '2 Plan & teach'], ['act', '3 Pupils fix']];
   return '<div class="flex flex-wrap gap-1 mb-3">' + steps.map(function (s) {
     var on = s[0] === step;
     return '<button type="button" class="wcf-step text-xs px-3 py-1.5 rounded-full border ' + (on ? 'border-[rgb(176,28,35)] bg-[rgb(176,28,35)] text-white font-semibold' : 'border-gray-300 bg-white text-gray-700') + '" data-step="' + s[0] + '">' + s[1] + '</button>';
-  }).join('') + '<span class="text-xs text-gray-500 self-center ml-2">' + (released ? 'Tasks released to pupils.' : 'Plan, then release from the Release tab.') + '</span></div>';
+  }).join('') + '<span class="text-xs text-gray-500 self-center ml-2">' + (released ? 'Released to pupils.' : 'Not released yet.') + '</span></div>';
 }
 
 // Called after the Class feedback tab renders.
@@ -175,6 +193,7 @@ async function wcfRender(t, rows) {
   var root = gEl('wcf-root'); if (!root) return;
   if (wcf.testId !== gcse.testId) { wcf = { plan: null, testId: gcse.testId, step: 'analyse' }; }
   var A = wcfAnalyse(t, rows);
+  if (!A.stats.marked) { root.innerHTML = ''; return; }   // nothing to analyse until marks are in
   if (!wcf.plan) {
     root.innerHTML = '<p class="text-xs text-gray-400">Loading plan…</p>';
     var saved = wcfNormalisePlan(await wcfLoadPlan(gcse.testId));
@@ -191,26 +210,39 @@ function wcfDraw(t, rows, A) {
   var h = wcfStepper(wcf.step, released);
   var analysisBox = gEl('wcf-analysis');
   if (analysisBox) analysisBox.classList.toggle('hidden', wcf.step !== 'analyse');
+  if (wcf.step === 'deliver') wcf.step = 'plan';
+  if (wcf.step === 'check') wcf.step = 'act';
+  h = wcfStepper(wcf.step, released);
+  if (analysisBox) analysisBox.classList.toggle('hidden', wcf.step !== 'analyse');
   if (wcf.step === 'analyse') {
-    h += wcfAnalyseHtml(t, A) + '<p class="text-xs text-gray-500 mb-2">Below: topics, intervention groups, heatmap and questions. Next: <button type="button" class="wcf-step underline text-blue-700" data-step="plan">2 Plan</button>.</p>';
+    h += wcfAnalyseHtml(t, A, plan);
   } else if (wcf.step === 'plan') {
-    h += wcfPlanHtml(t, rows, A);
-  } else if (wcf.step === 'deliver') {
-    h += '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-3"><p><b>Deliver the feedback (about 15–20 minutes).</b> Show what went well, re-teach each focus with the model answer, fix an anonymous wrong answer together, then pupils do their tasks.</p>' +
-      '<div class="flex flex-wrap gap-2"><button type="button" id="wcf-present" class="jhncc-primary px-4 py-2 rounded font-semibold">▶ Present (no names)</button><button type="button" id="wcf-print" class="px-4 py-2 rounded border border-gray-300 font-semibold">Print WCF sheet</button></div>' +
-      (plan.focuses.length ? '' : '<p class="text-amber-700">Add at least one focus in 2 Plan first.</p>') + '</div>';
-  } else if (wcf.step === 'act') {
-    h += '<div class="border border-gray-200 rounded-lg p-4 text-sm"><p>' + (released ? 'Pupils have their tasks. Follow their progress in the <button type="button" class="wcf-go-actions underline text-blue-700">Actions</button> tab.' :
-      'When you click <b>Release feedback</b> (Release tab), each pupil gets a <b>Feedback tasks</b> banner when they log in: see their answer → correct it → say why it was wrong → answer a new question.' + (plan.gradeAfter ? ' Their grade appears once the tasks are done.' : '')) + '</p></div>';
+    h += wcfPlanHtml(t, rows, A) +
+      '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-2 mt-4"><p><b>Teach it (15–20 minutes).</b> Show what went well, re-teach each focus with the model answer, fix an anonymous wrong answer together, then pupils do their tasks.</p>' +
+      '<div class="flex flex-wrap gap-2"><button type="button" id="wcf-present" class="jhncc-primary px-4 py-2 rounded font-semibold">▶ Present (no names)</button><button type="button" id="wcf-print" class="px-4 py-2 rounded border border-gray-300 font-semibold">Print class sheet</button>' +
+      '<button type="button" id="wcf-print-lists" class="px-4 py-2 rounded border border-gray-300 font-semibold">Print pupil checklists</button>' +
+      '<button type="button" class="wcf-step px-4 py-2 rounded border border-gray-300 font-semibold ml-auto" data-step="act">Next: pupils fix →</button></div></div>';
   } else {
-    h += '<div class="border border-gray-200 rounded-lg p-4 text-sm">' + (released ? '<p>Check it stuck opens for pupils on <b>' + new Date(plan.releasedAt + WCF_CHECK_DAYS * 864e5).toLocaleDateString('en-GB') + '</b> (' + WCF_CHECK_DAYS + ' days after release): one new question per focus. Results and the impact of this feedback are in the <button type="button" class="wcf-go-actions underline text-blue-700">Actions</button> tab.</p>' :
-      '<p>' + WCF_CHECK_DAYS + ' days after release each pupil gets one new question per focus, to see whether the correction stuck.</p>') + '</div>';
+    var checkDate = released ? new Date(plan.releasedAt + WCF_CHECK_DAYS * 864e5).toLocaleDateString('en-GB') : '';
+    h += '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-3">' +
+      '<div><b>What each pupil gets</b><ol class="list-decimal ml-5 mt-1 text-gray-700"><li>Their <b>topic checklist</b>: secure, nearly there, not yet – and up to 3 next steps.</li><li><b>Feedback tasks</b> for each focus: correct the answer → say why it was wrong → answer a new question.</li>' +
+      '<li>' + WCF_CHECK_DAYS + ' days later, <b>one check question</b> per focus to see if it stuck.</li></ol>' + (plan.gradeAfter ? '<p class="text-xs text-gray-500 mt-1">Grades appear once their tasks are done, so the feedback gets read first.</p>' : '') + '</div>' +
+      (released ? '<div class="rounded border border-green-200 bg-green-50 p-3 text-green-900"><b>Released ' + new Date(plan.releasedAt).toLocaleDateString('en-GB') + '.</b> The check questions open on <b>' + checkDate + '</b>. Follow progress in the <button type="button" class="wcf-go-actions underline text-blue-700">Actions</button> tab.</div>' :
+        (plan.focuses.length ? '' : '<p class="text-amber-700">There is no focus in the plan, so pupils will only get their checklist.</p>')) +
+      '<div class="flex flex-wrap items-center gap-2"><button type="button" id="wcf-release" class="jhncc-primary px-4 py-2 rounded font-semibold">' + (released ? 'Release again' : 'Release to pupils') + '</button>' +
+      '<span class="text-xs text-gray-500">Whether grades are shown is set on the <b>Release</b> tab.</span><span id="wcf-rel-msg" class="text-xs text-gray-500"></span></div></div>';
   }
   root.innerHTML = h;
   root.querySelectorAll('.wcf-step').forEach(function (b) { b.onclick = function () { wcf.step = b.dataset.step; wcfDraw(t, rows, A); }; });
   root.querySelectorAll('.wcf-go-actions').forEach(function (b) { b.onclick = function () { gcse.viewTab = 'actions'; gcseRenderTest(); }; });
   if (gEl('wcf-present')) gEl('wcf-present').onclick = function () { wcfPresent(t, rows, A); };
   if (gEl('wcf-print')) gEl('wcf-print').onclick = function () { wcfPrintSheet(t, rows, A); };
+  if (gEl('wcf-print-lists')) gEl('wcf-print-lists').onclick = function () { gcsePrintSlips(t, rows); };
+  if (gEl('wcf-release')) gEl('wcf-release').onclick = async function () {
+    this.disabled = true;
+    try { await wcfSavePlan(gcse.testId, plan); wcf.saved = true; await gcseRelease(t, rows); gcseRenderTest(); }
+    catch (e) { this.disabled = false; gEl('wcf-rel-msg').textContent = gDbError(e); }
+  };
   if (wcf.step === 'plan') wcfBindPlan(t, rows, A);
 }
 
@@ -284,7 +316,7 @@ function wcfBindPlan(t, rows, A) {
   gEl('wcf-grade-after').onchange = function () { plan.gradeAfter = this.checked; dirty(); };
   gEl('wcf-reset').onclick = function () { var keep = plan.releasedAt; wcf.plan = wcfSuggestPlan(t, rows, A); if (keep) wcf.plan.releasedAt = keep; dirty(); wcfDraw(t, rows, A); };
   gEl('wcf-save').onclick = async function () {
-    try { await wcfSavePlan(gcse.testId, plan); wcf.saved = true; gEl('wcf-msg').textContent = 'Saved. Release from the Release tab to give pupils their tasks.'; }
+    try { await wcfSavePlan(gcse.testId, plan); wcf.saved = true; gEl('wcf-msg').textContent = 'Saved. Release in step 3 to give pupils their tasks.'; }
     catch (e) { gEl('wcf-msg').textContent = gDbError(e); }
   };
 }
@@ -294,7 +326,7 @@ function wcfSlides(t, rows, A) {
   var plan = wcf.plan, n = A.sat.length, res = gcse.results || {};
   var slides = [];
   slides.push('<div class="text-sm uppercase tracking-wide text-gray-400">Whole-class feedback</div><h1 class="text-4xl font-bold mb-6">' + wEsc(t.title) + '</h1>' +
-    '<h2 class="text-2xl font-bold text-green-700 mb-2">What went well</h2><ul class="text-2xl list-disc ml-8">' + A.stats.best.map(function (T) { return '<li>' + wEsc(T.label) + '</li>'; }).join('') + '</ul>' +
+    '<h2 class="text-2xl font-bold text-green-700 mb-2">What went well</h2><ul class="text-2xl list-disc ml-8">' + (A.stats.best.length ? A.stats.best.map(function (T) { return '<li>' + wEsc(gTopicName(T.code)) + '</li>'; }).join('') : '<li>We are still building these topics – today we fix the biggest gaps.</li>') + '</ul>' +
     (A.best[0] ? '<div class="mt-6 text-lg bg-green-50 border border-green-200 rounded p-4"><div class="text-sm text-green-800 font-semibold mb-1">A full-mark answer (' + wEsc(A.best[0].qid) + ')</div>' + wEsc(A.best[0].text) + '</div>' : ''));
   plan.focuses.forEach(function (f, i) {
     var count = Object.keys(f.tiers || {}).filter(function (c) { return f.tiers[c] !== 'secure'; }).length;
@@ -342,7 +374,7 @@ function wcfPresent(t, rows, A) {
 function wcfPrintSheet(t, rows, A) {
   var plan = wcf.plan;
   var html = '<h1>Whole-class feedback: ' + wEsc(t.title) + '</h1><div class="muted">' + wEsc(t.className) + '</div>' +
-    '<h2>What went well</h2><ul>' + A.stats.best.map(function (T) { return '<li>' + wEsc(T.label) + '</li>'; }).join('') + '</ul>' +
+    '<h2>What went well</h2><ul>' + (A.stats.best.length ? A.stats.best.map(function (T) { return '<li>' + wEsc(gTopicName(T.code)) + '</li>'; }).join('') : '<li>No topic is at 70% yet.</li>') + '</ul>' +
     '<h2>Common misconceptions</h2><ol>' + plan.focuses.map(function (f) { return '<li><b>' + wEsc(f.title) + '</b><br>' + wEsc(f.explain) + (f.model ? '<br><i>Model answer:</i> ' + wEsc(f.model).replace(/\n/g, '<br>') : '') + '</li>'; }).join('') + '</ol>' +
     '<h2>Your improvements</h2><ol>' + plan.focuses.map(function (f) { return '<li>Correct your answer to ' + wEsc(f.qids.join(', ')) + '. Then explain why your first answer was wrong.<div class="lines"></div><div class="lines"></div></li>'; }).join('') + '</ol>' +
     '<h2>Apply your knowledge</h2><ol>' + plan.focuses.filter(function (f) { return f.transfer; }).map(function (f) {
@@ -400,7 +432,7 @@ async function wcfRenderActions(t, rows) {
   var root = gEl('wcf-actions-root'); if (!root) return;
   root.innerHTML = '<p class="text-gray-400 text-sm">Loading pupils\' tasks…</p>';
   var plan = wcfNormalisePlan(await wcfLoadPlan(gcse.testId));
-  if (!plan || !plan.focuses.length) { root.innerHTML = '<p class="text-sm text-gray-500">No feedback plan yet. Make one in <b>Class feedback → 2 Plan</b>, then release.</p>'; return; }
+  if (!plan || !plan.focuses.length) { root.innerHTML = '<p class="text-sm text-gray-500">No feedback plan yet. Make one in <b>Class feedback → 2 Plan &amp; teach</b>, then release.</p>'; return; }
   var sat = rows.filter(function (r) { return !r.missing && !r.absent; });
   var dirt = {};
   await Promise.all(sat.map(function (r) {
