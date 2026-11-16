@@ -37,6 +37,39 @@ var GCSE_BANK_X = (function () {
     r.markScheme = scheme; r.rules = rules; r.tests = tests;
     rows.push(r);
   }
-  return { M: M, S: S, rows: rows };
+  // Write / complete / fix the code – marked by running tests (GcseCode).
+  function C(topic, skill, level, marks, question, tests, model, opts) {
+    opts = opts || {};
+    var r = base(topic, skill, level, 'code', opts.command || (opts.starter ? 'Complete' : 'Write'), marks, question, opts.codes);
+    r.codeTests = tests.map(function (t) { return { in: (t[0] || []).map(String), out: String(t[1]), exact: !!opts.exact }; });
+    r.model = model; r.starterCode = opts.starter || '';
+    r.markScheme = 'Marked by running the program against ' + tests.length + ' test' + (tests.length === 1 ? '' : 's') + ' (any correct code scores – there are many ways to write it).\nTests:\n' +
+      r.codeTests.map(function (t) { return '• input ' + (t.in.length ? t.in.join(', ') : '(none)') + ' → output ' + t.out.replace(/\n/g, ' / '); }).join('\n') + '\nExample answer (ERL):\n' + model;
+    rows.push(r);
+  }
+  // Fill-in table (trace / truth table / steps). A cell "?x" is a box whose answer is x ("?a|b": a or b).
+  function T(topic, skill, level, marks, question, head, cells, opts) {
+    opts = opts || {};
+    var r = base(topic, skill, level, 'table', 'Complete', marks, question, opts.codes);
+    r.table = { head: head, rows: cells.map(function (row) { return row.map(function (c) { return String(c).charAt(0) === '?' ? '' : String(c); }); }),
+      blanks: cells.map(function (row) { return row.map(function (c) { return String(c).charAt(0) === '?'; }); }) };
+    r.answers = cells.map(function (row) { return row.map(function (c) { return String(c).charAt(0) === '?' ? String(c).slice(1) : ''; }); });
+    r.markScheme = 'One box = one share of the marks (' + marks + ' mark' + (marks === 1 ? '' : 's') + ' for all boxes right).\n' + head.join(' | ') + '\n' +
+      cells.map(function (row) { return row.map(function (c) { return String(c).charAt(0) === '?' ? '[' + String(c).slice(1).split('|')[0] + ']' : (c || '–'); }).join(' | '); }).join('\n');
+    rows.push(r);
+  }
+  // Extended response (6 / 8 marks): indicative content + levels; the app suggests, the teacher decides.
+  function L(topic, level, marks, command, question, indicative, opts) {
+    opts = opts || {};
+    var r = base(topic, '', level, 'long', command, marks, question, opts.codes);
+    r.indicative = indicative.slice(); r.sides = !!opts.sides;
+    var top = marks >= 8 ? [6, 8] : [5, 6], mid = marks >= 8 ? [3, 5] : [3, 4];
+    r.markScheme = 'Indicative content (credit other valid points):\n' + indicative.map(function (p) { return '• ' + p; }).join('\n') +
+      '\nLevels:\nLevel 3 (' + top[0] + '–' + top[1] + ' marks): thorough knowledge; points developed and applied to the context' + (opts.sides ? '; both sides discussed; a supported conclusion' : '') + '.' +
+      '\nLevel 2 (' + mid[0] + '–' + mid[1] + ' marks): reasonable knowledge; some points developed' + (opts.sides ? '; may be one-sided' : '') + '.' +
+      '\nLevel 1 (1–2 marks): basic points, little development.\n0 marks: nothing worthy of credit.';
+    rows.push(r);
+  }
+  return { M: M, S: S, C: C, T: T, L: L, rows: rows };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = GCSE_BANK_X;

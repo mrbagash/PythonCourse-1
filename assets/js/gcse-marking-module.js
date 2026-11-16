@@ -43,6 +43,15 @@ function gmAnswerText(q, resp) {
     var i = Number(resp); var L = 'ABCDEFGH'.charAt(i);
     return (L ? L + ') ' : '') + ((q.options || [])[i] != null ? q.options[i] : String(resp));
   }
+  if (q.type === 'table') {
+    // "Row 2: x = 3, total = 1 · Row 3: …" – only the boxes the pupil filled in.
+    var cells = []; try { cells = JSON.parse(resp) || []; } catch (e) { return String(resp); }
+    var head = (q.table && q.table.head) || [], blanks = (q.table && q.table.blanks) || [];
+    return blanks.map(function (row, i) {
+      var parts = row.map(function (b, j) { return b ? (head[j] || 'col ' + (j + 1)) + ' = ' + (((cells[i] || [])[j]) || '–') : null; }).filter(Boolean);
+      return parts.length ? 'Row ' + (i + 1) + ': ' + parts.join(', ') : null;
+    }).filter(Boolean).join(' · ');
+  }
   return String(resp);
 }
 function gmKeywords(q) {

@@ -877,7 +877,8 @@ function renderAssessmentQuestionPaper(spec) {
       onChange: function(value) { setQuestionAnswer(spec, q.id, value, { defer: true }); }
     });
   } else if (q.type === 'code_input') {
-    widgetEl.innerHTML = '<textarea id="ap-code-answer" class="quiz-code-area w-full min-h-[220px]" spellcheck="false" placeholder="Write your Python code here">' + escapeHtml(saved || '') + '</textarea>';
+    // GCSE code questions may give starter code to complete, and accept Python or OCR Exam Reference Language.
+    widgetEl.innerHTML = '<textarea id="ap-code-answer" class="quiz-code-area w-full min-h-[220px]" spellcheck="false" placeholder="' + escapeHtml(q.placeholder || 'Write your Python code here') + '">' + escapeHtml(saved || q.starter || '') + '</textarea>';
     var codeInput = document.getElementById('ap-code-answer');
     codeInput.oninput = function() { setQuestionAnswer(spec, q.id, codeInput.value, { defer: true }); };
     codeInput.onkeydown = function(e) {
@@ -899,6 +900,23 @@ function renderAssessmentQuestionPaper(spec) {
     widgetEl.querySelectorAll('input[name="ap-mcq-answer"]').forEach(function(radio) {
       radio.onchange = function() { setQuestionAnswer(spec, q.id, radio.value, { defer: true }); };
     });
+  } else if (q.type === 'gcse_table' && q.table) {
+    // Fill-in table (trace / truth table): the answer is saved as JSON – only the boxes count.
+    var cellsSaved = []; try { cellsSaved = JSON.parse(saved || '[]') || []; } catch (e) { cellsSaved = []; }
+    var tb = q.table;
+    widgetEl.innerHTML = '<div class="overflow-x-auto mt-2"><table class="text-sm border-collapse"><tr>' + tb.head.map(function(h) { return '<th class="border border-gray-600 px-2 py-1">' + escapeHtml(h) + '</th>'; }).join('') + '</tr>' +
+      tb.rows.map(function(row, i) {
+        return '<tr>' + row.map(function(c, j) {
+          if (!(tb.blanks[i] || [])[j]) return '<td class="border border-gray-600 px-2 py-1 text-center font-mono">' + escapeHtml(c) + '</td>';
+          return '<td class="border border-gray-600 p-0.5"><input class="ap-table-cell w-24 bg-gray-900 border border-gray-500 rounded px-1 py-0.5 text-center font-mono" data-r="' + i + '" data-c="' + j + '" autocomplete="off" value="' + escapeHtml(((cellsSaved[i] || [])[j]) || '') + '"></td>';
+        }).join('') + '</tr>';
+      }).join('') + '</table></div>';
+    var readCells = function() {
+      var cells = tb.rows.map(function(row) { return row.map(function() { return ''; }); });
+      widgetEl.querySelectorAll('.ap-table-cell').forEach(function(inp) { cells[Number(inp.dataset.r)][Number(inp.dataset.c)] = inp.value; });
+      return JSON.stringify(cells);
+    };
+    widgetEl.querySelectorAll('.ap-table-cell').forEach(function(inp) { inp.oninput = function() { setQuestionAnswer(spec, q.id, readCells(), { defer: true }); }; });
   } else if (q.type === 'gcse_text' || q.type === 'gcse_long') {
     widgetEl.innerHTML = '<textarea id="ap-output-answer" class="ex-textarea mt-2" rows="' + (q.type === 'gcse_long' ? 8 : 3) + '" autocomplete="off" placeholder="Write your answer">' + escapeHtml(saved || '') + '</textarea>';
     var gcseInput = document.getElementById('ap-output-answer');

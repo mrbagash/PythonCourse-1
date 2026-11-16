@@ -20,7 +20,7 @@
  *  H5 Needs list + "Is homework helping?" (profile + class).
  *  Homework is practice: it never changes official averages, grades or DP.
  */
-var HW = { size: 20, dueDays: 7, minMs: { mcq: 2500, short: 4000 }, minAwayMs: 1000, retries: 2, session: null };
+var HW = { size: 20, dueDays: 7, minMs: { mcq: 2500, short: 4000, code: 15000, table: 8000 }, minAwayMs: 1000, retries: 2, session: null };
 
 function hwKey(topic, skill) { return gTopicKey(topic) + (skill ? '~' + skill : ''); }
 function hwKeyParts(k) { var p = String(k).split('~'); return { topic: gFromTopicKey(p[0]), skill: p[1] || '' }; }
@@ -35,7 +35,8 @@ function hwBankByKey() {
   var by = {};
   (typeof gcseBankUsable === 'function' ? gcseBankUsable() : []).forEach(function (v) {
     var r = v.row;
-    if (!v.quizUsable || (r.type !== 'mcq' && r.type !== 'short')) return;
+    // Auto-markable: multiple choice, short written, code (run against tests) and fill-in tables.
+    if (!v.live || ['mcq', 'short', 'code', 'table'].indexOf(r.type) === -1) return;
     var k = hwKey(r.topics[0], r.skill || '');
     (by[k] = by[k] || []).push(r);
   });
@@ -138,7 +139,28 @@ function hwMiscHtml(m) {
   return '<div class="hw-misc rounded border border-red-200 bg-white p-2"><div><span class="font-semibold text-red-800">Misconception:</span> it looks like you think ' + gEsc(m.belief.replace(/\s*\(.*\)$/, '')) + '.</div>' +
     (m.fix ? '<div class="mt-0.5"><span class="font-semibold text-green-800">Actually:</span> ' + gEsc(m.fix) + '</div>' : '') + '</div>';
 }
+function hwCodeTableFeedbackHtml(q, answer, res) {
+  var key = (Array.isArray(q.codes) ? q.codes : []).map(function (id) { return J277.feedbackCode(id); }).filter(function (c) { return c && !c.exam; })[0];
+  if (q.type === 'code') {
+    var c = res.code || { results: [], lines: [], passed: 0, total: 0 };
+    var table = '<details class="text-xs mt-1"' + (res.ok ? '' : ' open') + '><summary class="cursor-pointer font-semibold">Test results</summary>' + GcseCode.resultsHtml(c, gEsc) + '</details>';
+    if (res.ok) return '<div class="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900"><b>✓ Your program passed all ' + c.total + ' tests!</b>' + table + '</div>';
+    return '<div class="hw-feedback rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2"><div><b>Not quite</b> – your program passed ' + c.passed + ' of ' + c.total + ' tests (' + res.mark + ' / ' + res.max + ' marks)</div>' +
+      (c.lines.length ? '<div class="hw-wrong"><span class="font-semibold">What went wrong:</span><ul class="list-disc ml-5">' + c.lines.map(function (l) { return '<li>' + gEsc(l) + '</li>'; }).join('') + '</ul></div>' : '') + table +
+      (key ? '<div class="text-xs"><span class="font-semibold">Remember:</span> ' + gEsc(key.text) + '</div>' : '') +
+      '<div class="hw-model rounded border border-amber-200 bg-white p-2"><div class="font-semibold">One way to write it (there are others)</div><pre class="mt-1 text-xs font-mono whitespace-pre-wrap">' + gEsc(q.model || '') + '</pre></div>' +
+      '<div class="text-xs text-amber-800">A similar question will come back later in this homework.</div></div>';
+  }
+  var t = res.table || { cells: [], correct: 0, total: 0 };
+  var vals = []; try { vals = JSON.parse(answer || '[]'); } catch (e) {}
+  if (res.ok) return '<div class="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900"><b>✓ All ' + t.total + ' boxes right!</b></div>';
+  return '<div class="hw-feedback rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2"><div><b>Not quite</b> – ' + t.correct + ' of ' + t.total + ' boxes right (' + res.mark + ' / ' + res.max + ' marks)</div>' +
+    '<div class="hw-where"><span class="font-semibold">Your table</span> (wrong boxes in red, with the right answer):' + hwTableInputHtml(q, { values: vals, marked: t.cells }) + '</div>' +
+    (key ? '<div class="text-xs"><span class="font-semibold">Remember:</span> ' + gEsc(key.text) + '</div>' : '') +
+    '<div class="text-xs text-amber-800">A similar question will come back later in this homework.</div></div>';
+}
 function hwFeedbackHtml(q, answer, res) {
+  if (q.type === 'code' || q.type === 'table') return hwCodeTableFeedbackHtml(q, answer, res);
   if (res.ok) {
     return '<div class="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900"><b>✓ Correct!</b>' +
       (res.points && res.points.length > 1 ? '<ul class="text-xs list-disc ml-5 mt-1">' + res.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
@@ -237,6 +259,25 @@ function hwMethodHint(q) {
   if (/ASC\(/i.test(qt)) return 'Character codes are in alphabetical order: count on one at a time from the code you are given.';
   return '';
 }
+// Keep the keywords and layout of the model answer, blank out the rest: "for ___ to ___" / "print(___)".
+function hwCodeSkeleton(model) {
+  var KEEP = /^(for|while|do|until|if|elseif|else|endif|endwhile|next|switch|case|default|endswitch|function|procedure|endfunction|endprocedure|return|print|input|array|const|global)\b/i;
+  return String(model || '').split('\n').map(function (line) {
+    var ind = line.match(/^\s*/)[0], t = line.trim();
+    if (!t) return line;
+    var m;
+    if (/^(else|endif|endwhile|endswitch|endfunction|endprocedure|do|default:?)$/i.test(t)) return line;
+    if ((m = t.match(/^(for)\s+(\w+)\s*=.*\bto\b.*$/i))) return ind + 'for ' + m[2] + ' = ___ to ___';
+    if ((m = t.match(/^next\s+(\w+)/i))) return ind + 'next ' + m[1];
+    if ((m = t.match(/^(while|until|if|elseif|switch|case)\b/i))) return ind + m[1] + ' ___' + (/then\s*$/i.test(t) ? ' then' : '') + (/:\s*$/.test(t) ? ':' : '');
+    if ((m = t.match(/^(function|procedure)\s+(\w+)\s*\(([^)]*)\)/i))) return ind + m[1] + ' ' + m[2] + '(' + m[3] + ')';
+    if (/^return\b/i.test(t)) return ind + 'return ___';
+    if ((m = t.match(/^(\w+(?:\[[^\]]*\])?)\s*=\s*(input|int|float)\s*\(/i))) return ind + m[1] + ' = ' + m[2] + '(___)';
+    if ((m = t.match(/^(\w+(?:\[[^\]]*\])?)\s*=/))) return ind + m[1] + ' = ___';
+    if (/^print\s*\(/i.test(t)) return ind + 'print(___)';
+    return KEEP.test(t) ? ind + t.split(/\s+/)[0] + ' ___' : ind + '___';
+  }).join('\n');
+}
 function hwSimilar(q) {
   var S = HW.session, list = (S && S.ctx.bank[hwKey(q.topics[0], q.skill || '')]) || [];
   var others = list.filter(function (r) { return r.id !== q.id && !(S.used || {})[r.id]; });
@@ -250,6 +291,8 @@ function hwScaffolds(q) {
   var steps = [];
   var frame = (typeof GCSE_FRAMES !== 'undefined' && GCSE_FRAMES[q.command]) || null;
   var what = q.type === 'mcq' ? 'Pick ONE answer. Read every option before you choose – cover the options and try to answer first.'
+    : q.type === 'code' ? (frame ? frame.means : '') + ' Your program is run with test inputs – the more tests it passes, the more of the ' + q.marks + ' marks you get. Use the example in the question to check it first.'
+    : q.type === 'table' ? 'Fill in every box. Work through the code one line at a time, writing each value as it changes. Each box right earns part of the ' + q.marks + ' marks.'
     : (frame ? frame.means : 'Answer exactly what the question asks.') + (q.marks > 1 ? ' It is worth ' + q.marks + ' marks, so make ' + q.marks + ' separate points.' : '');
   steps.push({ key: 'what', label: 'What the question wants', html: gEsc(what) });
   var rem = hwReminderFor(q);
@@ -259,6 +302,19 @@ function hwScaffolds(q) {
       var ai = q.answerIndex, wrong = q.options.map(function (o, i) { return i; }).filter(function (i) { return i !== ai; });
       var keep = wrong[hwHashPick(q.id, wrong.length)];
       document.querySelectorAll('.hw-opt').forEach(function (b) { var i = Number(b.dataset.i); if (i !== ai && i !== keep) { b.disabled = true; b.classList.add('line-through', 'opacity-40'); } });
+    } });
+  } else if (q.type === 'code') {
+    var skel = hwCodeSkeleton(q.model || '');
+    if (skel && !q.starterCode) steps.push({ key: 'skeleton', label: 'The shape of an answer', html: 'Fill in each ___ (one way to do it):<pre class="mt-1 text-xs font-mono whitespace-pre-wrap bg-white rounded p-1">' + gEsc(skel) + '</pre>' });
+    else if (q.starterCode) steps.push({ key: 'tests', label: 'Check it like a computer', html: 'Trace the code with the example in the question, line by line. Where does it first do something different from what it should?' });
+  } else if (q.type === 'table') {
+    steps.push({ key: 'firstrow', label: 'First row done for you', html: 'The first row of boxes has been filled in. Use it to see the pattern, then carry on line by line.', apply: function () {
+      var tb = q.table, ans = q.answers || [];
+      for (var i = 0; i < tb.blanks.length; i++) {
+        if (!tb.blanks[i].some(Boolean)) continue;
+        tb.blanks[i].forEach(function (b, j) { if (!b) return; var inp = document.querySelector('.hw-cell[data-r="' + i + '"][data-c="' + j + '"]'); if (inp) { inp.value = String(ans[i][j]).split('|')[0]; inp.readOnly = true; inp.classList.add('bg-blue-50'); } });
+        break;
+      }
     } });
   } else {
     var method = hwMethodHint(q);
@@ -272,6 +328,8 @@ function hwScaffolds(q) {
   var ex = hwSimilar(q);
   if (ex) {
     var exAns = ex.type === 'mcq' ? (function () { var ai = ex.answer ? ex.answer.charCodeAt(0) - 65 : ex.answerIndex; var wi = ex.options.map(function (o, i) { return i; }).filter(function (i) { return i !== ai && (ex.why || [])[i]; })[0]; return 'Answer: <b>' + gEsc(ex.options[ai]) + '</b>' + (wi != null ? '<div class="text-xs text-gray-600">Not “' + gEsc(ex.options[wi]) + '”: ' + gEsc(ex.why[wi]) + '</div>' : ''); })()
+      : ex.type === 'code' ? 'One way to write it:<pre class="mt-1 text-xs font-mono whitespace-pre-wrap bg-white rounded p-1">' + gEsc(ex.model || '') + '</pre>'
+      : ex.type === 'table' ? 'Answers:<pre class="mt-1 text-xs font-mono whitespace-pre-wrap bg-white rounded p-1">' + gEsc(String(ex.markScheme || '').split('\n').slice(1).join('\n')) + '</pre>'
       : 'A full-mark answer: <div class="whitespace-pre-wrap">' + gEsc(String(ex.markScheme || '').replace(/\s*\(\d\)/g, '')) + '</div>';
     steps.push({ key: 'example', label: 'Worked example (a similar question)', html: '<div class="whitespace-pre-wrap italic' + (/\n/.test(ex.question) ? ' font-mono text-xs' : '') + '">' + gEsc(ex.question) + '</div><div class="mt-1">' + exAns + '</div>' });
   }
@@ -467,6 +525,8 @@ function hwNext() {
     '<div id="hw-q" class="font-semibold text-gray-800 mb-3 whitespace-pre-wrap' + (code ? ' font-mono text-sm bg-gray-50 rounded p-2' : '') + '">' + gEsc(q.question) + '</div>' +
     '<div id="hw-help" class="mb-3"><div id="hw-help-steps" class="space-y-2"></div>' + (S.help.steps.length ? '<button type="button" id="hw-hint" class="mt-2 text-xs px-2 py-1 rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-50">💡 Need a hint? (' + S.help.steps.length + ' left)</button>' : '') + '</div>' +
     (q.type === 'mcq' ? '<div class="grid gap-2">' + q.options.map(function (o, i) { return '<button type="button" class="hw-opt text-left px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-pre-wrap" data-i="' + i + '">' + String.fromCharCode(65 + i) + '. ' + gEsc(o) + '</button>'; }).join('') + '</div>'
+      : q.type === 'code' ? hwCodeInputHtml(q)
+      : q.type === 'table' ? hwTableInputHtml(q) + '<button type="button" id="hw-submit" class="jhncc-primary mt-2 px-4 py-1.5 rounded text-sm font-semibold">Check</button>'
       : '<textarea id="hw-answer" rows="3" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="Type your answer"></textarea><button type="button" id="hw-submit" class="jhncc-primary mt-2 px-4 py-1.5 rounded text-sm font-semibold">Check</button>') +
     '<div id="hw-result" class="mt-3"></div>';
   hwEasyRead(hwEasyReadOn());
@@ -479,7 +539,80 @@ function hwNext() {
   if (gEl('hw-hint')) gEl('hw-hint').onclick = function () { hwShowStep(S.help.shown); };
   hwStartTracking();
   if (q.type === 'mcq') body.querySelectorAll('.hw-opt').forEach(function (b) { b.onclick = function () { body.querySelectorAll('.hw-opt').forEach(function (x) { x.disabled = true; }); hwSubmit(b.dataset.i); }; });
+  else if (q.type === 'code') hwBindCodeInput(q);
+  else if (q.type === 'table') gEl('hw-submit').onclick = function () {
+    var cells = hwReadTable(); if (!cells.some(function (row) { return row.some(function (c) { return c; }); })) return;
+    gEl('hw-submit').disabled = true; document.querySelectorAll('.hw-cell').forEach(function (x) { x.disabled = true; }); hwSubmit(JSON.stringify(cells));
+  };
   else gEl('hw-submit').onclick = function () { var a = gEl('hw-answer').value.trim(); if (!a) return; gEl('hw-submit').disabled = true; gEl('hw-answer').disabled = true; hwSubmit(a); };
+}
+// ── Code and table questions ────────────────────────────────────────────────
+function hwCodeInputHtml(q) {
+  return '<div class="text-xs text-gray-500 mb-1">Write your answer in Python or in OCR Exam Reference Language – both are accepted. Your program is checked by running it with test inputs.</div>' +
+    '<textarea id="hw-answer" rows="' + Math.max(8, String(q.starterCode || '').split('\n').length + 2) + '" spellcheck="false" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono" placeholder="Write your code here">' + gEsc(q.starterCode || '') + '</textarea>' +
+    '<div class="flex flex-wrap items-center gap-2 mt-2"><button type="button" id="hw-submit" class="jhncc-primary px-4 py-1.5 rounded text-sm font-semibold">Check</button>' +
+    '<span class="text-xs text-gray-500 ml-2">Try it first:</span><input id="hw-try-in" class="border border-gray-300 rounded px-2 py-1 text-xs w-40" placeholder="inputs, e.g. 3, 4"><button type="button" id="hw-try" class="px-2 py-1 rounded border border-gray-300 text-xs">▶ Run</button></div>' +
+    '<pre id="hw-try-out" class="hidden mt-2 text-xs bg-gray-900 text-green-200 rounded p-2 whitespace-pre-wrap"></pre>';
+}
+function hwBindCodeInput(q) {
+  var ta = gEl('hw-answer');
+  ta.onkeydown = function (e) {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    var s = ta.selectionStart, en = ta.selectionEnd;
+    ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 4;
+  };
+  gEl('hw-try').onclick = async function () {
+    var out = gEl('hw-try-out'); out.classList.remove('hidden'); out.textContent = 'Running…';
+    var ins = String(gEl('hw-try-in').value || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
+    var r = await GcseCode.run(ta.value, ins);
+    out.textContent = (r.output || '') + (r.error ? (r.output ? '\n' : '') + (r.timedOut ? 'Stopped: the program took too long – does a loop never end?' : r.error) : '') || '(no output)';
+  };
+  gEl('hw-submit').onclick = function () {
+    var a = ta.value; if (!a.trim() || a === (q.starterCode || '')) return;
+    gEl('hw-submit').disabled = true; ta.disabled = true; gEl('hw-submit').textContent = 'Testing…'; hwSubmit(a);
+  };
+}
+function hwTableInputHtml(q, opts) {
+  opts = opts || {};
+  var tb = q.table || { head: [], rows: [], blanks: [] };
+  return '<div class="overflow-x-auto"><table class="hw-table text-sm border-collapse"><tr>' + tb.head.map(function (h) { return '<th class="border border-gray-300 bg-gray-50 px-2 py-1 font-semibold">' + gEsc(h) + '</th>'; }).join('') + '</tr>' +
+    tb.rows.map(function (row, i) {
+      return '<tr>' + row.map(function (c, j) {
+        if (!(tb.blanks[i] || [])[j]) return '<td class="border border-gray-300 px-2 py-1 text-center font-mono">' + gEsc(c) + '</td>';
+        var val = opts.values ? ((opts.values[i] || [])[j] || '') : '';
+        var mark = opts.marked ? opts.marked[i][j] : null;
+        return '<td class="border border-gray-300 p-0.5' + (mark === true ? ' bg-green-50' : mark === false ? ' bg-red-50' : '') + '">' +
+          (opts.marked ? '<div class="px-1 font-mono text-center">' + (mark ? '✓ ' : '✗ ') + gEsc(val || '–') + (mark === false ? ' <span class="text-green-800">→ ' + gEsc(String(((q.answers || [])[i] || [])[j]).split('|')[0]) + '</span>' : '') + '</div>'
+            : '<input class="hw-cell w-24 border border-blue-300 rounded px-1 py-0.5 text-center font-mono" data-r="' + i + '" data-c="' + j + '" autocomplete="off">') + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</table></div>';
+}
+function hwReadTable() {
+  var tb = (HW.session.q && HW.session.q.table) || { rows: [] };
+  var cells = tb.rows.map(function (row) { return row.map(function () { return ''; }); });
+  document.querySelectorAll('.hw-cell').forEach(function (inp) { cells[Number(inp.dataset.r)][Number(inp.dataset.c)] = inp.value.trim(); });
+  return cells;
+}
+// Marks any question type (code questions run their tests, so this is async).
+async function hwMarkAny(q, answer) {
+  if (q.type === 'code') {
+    var r = await GcseCode.mark(q, answer);
+    var codes = [];
+    (r.lines || []).forEach(function (l) {
+      if (/never finished|never stops/.test(l)) codes.push('I2');
+      if (/mixed text and numbers/.test(l)) codes.push('Q9');
+      if (/position that does not exist/.test(l)) codes.push('Q5');
+      if (/one time too|starts one too late/.test(l)) codes.push('I1');
+    });
+    if (!codes.length && r.marks < r.max) codes = GcseCore.asList(q.codes).slice();
+    return { ok: r.max > 0 && r.marks >= r.max, mark: r.marks, max: r.max, code: r, codes: codes, points: [] };
+  }
+  if (q.type === 'table') {
+    var t = GcseCore.markTable(q, answer);
+    return { ok: t.marks >= t.max, mark: t.marks, max: t.max, table: t, codes: t.marks >= t.max ? [] : GcseCore.asList(q.codes).slice(), points: [] };
+  }
+  return hwMarkAnswer(q, answer);
 }
 async function hwSubmit(answer) {
   var S = HW.session, q = S.q, item = S.item, rec = S.rec, now = Date.now();
@@ -488,7 +621,7 @@ async function hwSubmit(answer) {
   var minMs = HW.minMs[q.type] != null ? HW.minMs[q.type] : 3000;
   if (ms < minMs) hwLogEvent('fast', { ms: ms }, track);
   var independent = !track.flags;
-  var res = hwMarkAnswer(q, answer);
+  var res = await hwMarkAny(q, answer);
   // Mastery only changes for answers that look independent (pupils are not told).
   var key = item.k, m0 = S.ctx.mastery[key];
   var level = hwLevelOf(q);
@@ -519,8 +652,10 @@ async function hwSubmit(answer) {
   } else { rec.slots[item.s] = { cleared: true, gaveUp: true }; rec.cleared = (rec.cleared || 0) + 1; upd['slots/' + item.s] = rec.slots[item.s]; upd.cleared = rec.cleared; }
   rec.pos++; upd.pos = rec.pos;
   S.ref.update(upd).catch(function () {});
-  if (typeof gcseRecordQuizAttempt === 'function' && independent) { try { gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.question, gcseCodes: res.codes }, q.type === 'mcq' ? q.options[Number(answer)] : answer, { marks: res.mark, max: res.max }, 'practice'); } catch (e) {} }
+  if (typeof gcseRecordQuizAttempt === 'function' && independent && (q.type === 'mcq' || q.type === 'short')) { try { gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.question, gcseCodes: res.codes }, q.type === 'mcq' ? q.options[Number(answer)] : answer, { marks: res.mark, max: res.max }, 'practice'); } catch (e) {} }
   if (gEl('hw-hint')) gEl('hw-hint').disabled = true;
+  if (gEl('hw-submit')) gEl('hw-submit').textContent = 'Checked';
+  if (gEl('hw-try')) gEl('hw-try').disabled = true;
   gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<button type="button" id="hw-next" class="mt-3 px-4 py-1.5 rounded border border-gray-300 text-sm font-semibold">Next →</button>';
   hwProgressBar();
   gEl('hw-next').onclick = hwNext;

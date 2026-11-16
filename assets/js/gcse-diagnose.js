@@ -148,6 +148,8 @@ var GcseDiagnose = (function () {
           var cut = c.search(d.other), s0 = c.search(d.subj);
           c = s0 < cut ? c.slice(0, cut) : c.slice(s0);
         }
+        // Registers: what a register holds is said AFTER it is named ("… at that address and stored in the MDR" is not about the MDR).
+        if (subjHere && /^R\d$/.test(d.id)) c = c.slice(c.search(d.subj));
         var m = d.test(c);
         if (m && !seen[d.belief]) { seen[d.belief] = true; found.push({ id: d.id, belief: d.belief, phrase: m }); }
       });

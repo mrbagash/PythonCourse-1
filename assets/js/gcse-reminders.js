@@ -169,6 +169,7 @@ var GCSE_FRAMES = {
   Add:       { means: '“Add” = add the binary numbers column by column from the right, writing the carries.', starter: '' },
   Shift:     { means: 'Move every bit the number of places asked, filling the gaps with 0s.', starter: '' },
   Write:     { means: '“Write” = write the code or algorithm. Make it do exactly what the question asks.', starter: '' },
-  Complete:  { means: '“Complete” = fill in the gaps so it works.', starter: '' }
+  Complete:  { means: '“Complete” = fill in the gaps so it works.', starter: '' },
+  Refine:    { means: '“Refine” = find what is wrong and change the code so it does exactly what the question asks. Test it with the example.', starter: '' }
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = { GCSE_REMIND: GCSE_REMIND, GCSE_FRAMES: GCSE_FRAMES };

@@ -293,6 +293,65 @@ var GcseCore = (function () {
     return { marks: Math.min(matched.length, marks || matched.length), matched: matched, lines: lines };
   }
 
+  // ── Fill-in tables ───────────────────────────────────────────
+  function normCell(v) { return String(v == null ? '' : v).toLowerCase().replace(/["'\[\](){}]/g, '').replace(/,/g, ' ').replace(/\s*\/\s*/g, ' / ').replace(/\s+/g, ' ').trim(); }
+  function cellMatches(expected, got) {
+    var g = normCell(got);
+    if (!g) return false;
+    return String(expected).split('|').some(function (e) {
+      e = normCell(e);
+      if (e === g) return true;
+      var x = Number(e), y = Number(g);
+      if (e !== '' && g !== '' && !isNaN(x) && !isNaN(y)) return Math.abs(x - y) < 1e-9;
+      if (e === 'true' || e === 'false') return g === e || (e === 'true' ? g === '1' || g === 't' || g === 'yes' : g === '0' || g === 'f' || g === 'no');
+      return false;
+    });
+  }
+  // answer: JSON string or 2D array of the pupil's cells (only the boxes matter).
+  function markTable(q, answer) {
+    var got = answer;
+    if (typeof got === 'string') { try { got = JSON.parse(got || '[]'); } catch (e) { got = []; } }
+    got = Array.isArray(got) ? got : [];
+    var blanks = (q.table && q.table.blanks) || [], cells = [], correct = 0, total = 0, attempted = 0;
+    blanks.forEach(function (row, i) {
+      cells.push(row.map(function (isBlank, j) {
+        if (!isBlank) return null;
+        total++;
+        var v = (got[i] || [])[j];
+        if (String(v == null ? '' : v).trim()) attempted++;
+        var ok = cellMatches(((q.answers || [])[i] || [])[j], v);
+        if (ok) correct++;
+        return ok;
+      }));
+    });
+    var max = Number(q.marks) || 1;
+    var marks = total ? (correct === total ? max : Math.floor(correct / total * max)) : 0;
+    return { marks: marks, max: max, correct: correct, total: total, attempted: attempted, cells: cells };
+  }
+  // ── Extended answers (6+ marks): suggest a level and mark; the teacher confirms ──
+  function suggestBandMark(q, answer) {
+    var max = Number(q.marks) || 6;
+    var lines = (q.indicative && q.indicative.length) ? q.indicative : String(q.markScheme || '').split('\n').filter(function (l) { return /^\s*[•\-*]/.test(l); }).map(function (l) { return l.replace(/^\s*[•\-*]\s*/, ''); });
+    var sug = suggestLongMark(lines.join('\n'), answer, lines.length);
+    var n = sug.matched.length, text = String(answer || '');
+    var words = tokens(normaliseText(text)).length;
+    var balanced = /\b(however|but|on the other hand|although|whereas|despite|disadvantage|drawback|downside|negative)\b/i.test(text) && /\b(advantage|benefit|positive|good|helps?|useful|better)\b/i.test(text);
+    var concluded = /\b(overall|in conclusion|to conclude|on balance|therefore|i think|i believe|i would)\b/i.test(text);
+    var top = max >= 8 ? [6, 8] : [5, 6], mid = max >= 8 ? [3, 5] : [3, 4];
+    // A short answer that still touches an indicative point (one key word) is a basic Level 1 answer.
+    var ans = tokens(normaliseText(text)).map(stem);
+    var touches = lines.some(function (l) { return tokens(normaliseText(l)).filter(function (w) { return w.length >= 4 && SCHEME_STOP.indexOf(w) === -1; }).map(stem).some(function (w) { return ans.indexOf(w) !== -1; }); });
+    var level = n >= 5 && words >= 80 ? 3 : n >= 3 ? 2 : n >= 1 || words >= 25 || (touches && words >= 3) ? 1 : 0;
+    if (level === 3 && q.sides && !balanced) level = 2;
+    var mark = 0;
+    if (level === 3) mark = Math.min(top[1], top[0] + (concluded ? 1 : 0) + (n >= 7 ? 1 : 0));
+    else if (level === 2) mark = Math.min(mid[1], mid[0] + Math.max(0, n - 3) + (balanced ? 1 : 0));
+    else if (level === 1) mark = n >= 2 ? 2 : 1;
+    var why = 'Level ' + level + ' suggested: ' + n + ' indicative point' + (n === 1 ? '' : 's') + ' found' +
+      (q.sides ? (balanced ? ', both sides discussed' : ', one-sided') + (concluded ? ', has a conclusion' : ', no conclusion') : '') + '.';
+    return { marks: mark, level: level, matched: sug.matched, lines: lines, reason: why };
+  }
+
   // Suggest feedback codes (J277.FEEDBACK_CODES) for a marked answer.
   //   q: { type, command, topics, codes, marks }  result: from mark() (or { marks, max } for MCQ)
   // Firebase can hand lists back as objects ({0:..,1:..}) – accept either.
@@ -463,7 +522,7 @@ var GcseCore = (function () {
     if (x === 'h' || x.indexOf('high') === 0) return 'H';
     return '';
   }
-  var BANK_TYPES = ['mcq', 'short', 'long', 'paper'];
+  var BANK_TYPES = ['mcq', 'short', 'long', 'paper', 'code', 'table'];
 
   function bankRowFromCells(cells, headerIdx) {
     function get(name) { var i = headerIdx[name.toLowerCase()]; return i == null ? '' : String(cells[i] == null ? '' : cells[i]).trim(); }
@@ -487,7 +546,7 @@ var GcseCore = (function () {
       if (!r.id) errors.push('Missing ID');
       if (!r.question) errors.push('Missing question');
       if (!(r.marks > 0)) errors.push('Missing marks');
-      if (BANK_TYPES.indexOf(r.type) === -1) errors.push('Type must be mcq, short, long or paper');
+      if (BANK_TYPES.indexOf(r.type) === -1) errors.push('Type must be mcq, short, long, paper, code or table');
       if (!r.topics.length) errors.push('Missing topic');
       r.difficulty = normaliseDifficulty(r.difficulty);
       (r.codes || []).forEach(function (c) { if (J && J.feedbackCode && !J.feedbackCode(c)) errors.push('Unknown feedback code ' + c); });
@@ -524,6 +583,19 @@ var GcseCore = (function () {
           if (failed.length) errors.push(failed.length + ' test answer(s) marked wrongly');
         }
       }
+      if (r.type === 'code') {
+        var ct = Array.isArray(r.codeTests) ? r.codeTests : [];
+        if (!ct.length) errors.push('Code questions need test cases (inputs → expected output)');
+        ct.forEach(function (t, k) { if (!t || t.out == null || String(t.out).trim() === '') errors.push('Test ' + (k + 1) + ' has no expected output'); });
+        if (!r.model) errors.push('Code questions need a model answer');
+      }
+      if (r.type === 'table') {
+        var tb = r.table || {};
+        var blanks = (tb.blanks || []).reduce(function (n, row) { return n + row.filter(Boolean).length; }, 0);
+        if (!tb.head || !tb.rows || !tb.rows.length) errors.push('Table questions need a header and rows');
+        else if (!blanks) errors.push('Table questions need at least one box to fill in');
+        if (!Array.isArray(r.answers) || r.answers.length !== (tb.rows || []).length) errors.push('Table answers do not match the rows');
+      }
       if ((r.type === 'long' || r.type === 'short') && !r.markScheme) errors.push('Needs a mark scheme');
       var live = !errors.length;
       return { row: r, live: live, quizUsable: live && (r.type === 'mcq' || r.type === 'short' || r.type === 'long'), errors: errors, testResults: testResults };
@@ -535,7 +607,7 @@ var GcseCore = (function () {
     parseTestAnswers: parseTestAnswers, parseTestMap: parseTestMap, splitRow: splitRow,
     gradeFor: gradeFor, gradeLabel: gradeLabel, defaultBoundaries: defaultBoundaries, DEFAULT_BOUNDARY_SOURCE: DEFAULT_BOUNDARY_SOURCE,
     componentBoundaries: componentBoundaries, COMPONENT_BOUNDARY_SOURCE: COMPONENT_BOUNDARY_SOURCE, paperOf: paperOf,
-    suggestFeedbackCodes: suggestFeedbackCodes, normaliseDifficulty: normaliseDifficulty, asList: asList, suggestLongMark: suggestLongMark, parseGrade: parseGrade, suggestDp: suggestDp,
+    suggestFeedbackCodes: suggestFeedbackCodes, markTable: markTable, cellMatches: cellMatches, suggestBandMark: suggestBandMark, normaliseDifficulty: normaliseDifficulty, asList: asList, suggestLongMark: suggestLongMark, parseGrade: parseGrade, suggestDp: suggestDp,
     BANK_HEADERS: BANK_HEADERS, BANK_TYPES: BANK_TYPES, bankRowFromCells: bankRowFromCells, validateBank: validateBank
   };
 })();

@@ -131,7 +131,9 @@ function gcseOnlineSpec(id, t) {
       return {
         id: q.id, title: (J277.get((q.topics || [])[0]) || {}).title || 'GCSE', marks: q.marks,
         prompt: gEsc(q.text || '') + ' <span class="text-xs text-yellow-300">[' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + ']</span>',
-        type: q.type === 'mcq' ? 'mcq' : (q.type === 'long' ? 'gcse_long' : 'gcse_text'), options: q.type === 'mcq' ? (q.options || []) : null
+        type: q.type === 'mcq' ? 'mcq' : q.type === 'code' ? 'code_input' : q.type === 'table' ? 'gcse_table' : (q.type === 'long' ? 'gcse_long' : 'gcse_text'), options: q.type === 'mcq' ? (q.options || []) : null,
+        starter: q.type === 'code' ? (q.starterCode || '') : null, placeholder: q.type === 'code' ? 'Write your code here – Python or OCR Exam Reference Language' : null,
+        table: q.type === 'table' && q.table ? { head: q.table.head, rows: q.table.rows, blanks: q.table.blanks } : null
       };
     })
   };
@@ -161,6 +163,15 @@ function gcseAutoMarkQuestion(q, answer) {
     var res = { marks: right ? q.marks : 0, max: q.marks };
     return { mark: res.marks, status: 'auto', reason: right ? 'Correct option' : 'Wrong option', codes: right ? [] : GcseCore.suggestFeedbackCodes({ type: 'mcq', topics: q.topics, codes: q.codes }, text, res, J277) };
   }
+  if (q.type === 'table') {
+    var tm = GcseCore.markTable(q, text);
+    if (!tm.attempted) return { mark: null, status: 'auto', reason: 'Not attempted', codes: ['E4'] };
+    return { mark: tm.marks, status: 'auto', reason: tm.correct + ' of ' + tm.total + ' boxes right', codes: tm.marks >= tm.max ? [] : GcseCore.asList(q.codes).slice() };
+  }
+  if (q.type === 'long' && q.marks >= 6) {
+    var band = GcseCore.suggestBandMark(q, text);
+    return { mark: band.marks, status: 'needs', reason: band.reason + ' Check against the levels in the mark scheme.', codes: [] };
+  }
   if (q.type === 'short' && q.rules) {
     var m = GcseCore.mark(q.rules, text, q.marks);
     return { mark: m.marks, status: m.needsCheck ? 'needs' : 'auto', reason: m.points.map(function (p) { return (p.awarded ? '✓ ' : '✗ ') + p.reason; }).join(' · '),
@@ -172,6 +183,15 @@ function gcseAutoMarkQuestion(q, answer) {
       codes: GcseCore.suggestFeedbackCodes({ type: 'long', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, text, { marks: sug.marks, max: q.marks, points: [] }, J277) };
   }
   return { mark: null, status: 'unmarked', reason: 'Needs marking', codes: [] };
+}
+// Code answers are run against their tests, so marking them is async. Everything else uses gcseAutoMarkQuestion.
+async function gcseAutoMarkQuestionAsync(q, answer) {
+  if (q.type !== 'code') return gcseAutoMarkQuestion(q, answer);
+  var text = String(answer == null ? '' : answer);
+  if (!text.trim() || text === (q.starterCode || '')) return { mark: null, status: 'auto', reason: 'Not attempted', codes: ['E4'] };
+  if (typeof GcseCode === 'undefined') return { mark: null, status: 'unmarked', reason: 'Needs marking', codes: [] };
+  var r = await GcseCode.mark(q, text);
+  return { mark: r.marks, status: r.marks >= r.max ? 'auto' : 'needs', reason: 'Passed ' + r.passed + ' of ' + r.total + ' tests' + (r.lines.length ? ' – ' + r.lines[0] : '') + (r.marks < r.max ? ' (worth a look: the tests decide the mark, but you can change it)' : ''), codes: r.marks >= r.max ? [] : GcseCore.asList(q.codes).slice() };
 }
 function gcseResultFromQuestions(t, rec) {
   var score = 0, notAttempted = 0;
@@ -193,19 +213,23 @@ async function gcseSyncOnlineResults(testId) {
   for (var i = 0; i < sessions.length; i++) {
     var snap = await state.db.ref('quizSessions/' + sessions[i] + '/answers/0').get();
     var all = snap.exists() ? (snap.val() || {}) : {};
-    Object.keys(all).forEach(function (code) {
+    var codesIn = Object.keys(all);
+    for (var ci = 0; ci < codesIn.length; ci++) {
+      var code = codesIn[ci];
       var resp = all[code];
-      if (!resp || !resp.completed) return;
+      if (!resp || !resp.completed) continue;
       var prev = existing[code];
-      if (prev && prev.submittedAt && prev.submittedAt >= (resp.completedAt || 0)) return; // already collected
+      if (prev && prev.submittedAt && prev.submittedAt >= (resp.completedAt || 0)) continue; // already collected
       var answers = resp.answers || {};
       var rec = { online: true, absent: false, className: t.className, submittedAt: resp.completedAt || Date.now(), importedAt: resp.completedAt || Date.now(),
         marks: {}, auto: {}, status: {}, responses: {}, reasons: {}, codes: {}, tabLeaves: Object.keys(resp.tabLeaves || {}).length, session: sessions[i],
         dp: prev && prev.dp != null ? prev.dp : null };
-      (t.questions || []).forEach(function (q) {
+      var tqs = t.questions || [];
+      for (var qi = 0; qi < tqs.length; qi++) {
+        var q = tqs[qi];
         var a = answers[q.id];
         var prevStatus = prev && prev.status && prev.status[q.id];
-        var am = gcseAutoMarkQuestion(q, a);
+        var am = await gcseAutoMarkQuestionAsync(q, a);
         rec.responses[q.id] = a == null ? '' : String(a);
         rec.auto[q.id] = am.mark;
         rec.reasons[q.id] = am.reason;
@@ -218,11 +242,11 @@ async function gcseSyncOnlineResults(testId) {
           rec.marks[q.id] = am.mark;
           rec.status[q.id] = am.status;
         }
-      });
+      }
       gcseResultFromQuestions(t, rec);
       updates['gcse/results/' + testId + '/' + code] = rec;
       n++;
-    });
+    }
   }
   if (n) await state.db.ref().update(updates);
   return n;
@@ -1591,7 +1615,7 @@ function gcseCodeHtml(ids) {
 }
 function gcsePracticePoolFor(topicCodes) {
   var byTopic = {};
-  gcseQuestionsForTopics(topicCodes, ['mcq', 'short', 'long']).forEach(function (v) {
+  gcseQuestionsForTopics(topicCodes, ['mcq', 'short', 'long']).filter(function (v) { return v.row.type !== 'long' || v.row.marks <= 4; }).forEach(function (v) {
     var k = v.row.topics[0];
     (byTopic[k] = byTopic[k] || []).push(gcsePracticeItem(v));
   });
@@ -1845,7 +1869,10 @@ var GCSE_QTYPES = [
   { k: 'mcq', label: 'Multiple choice', match: function (r) { return r.type === 'mcq'; } },
   { k: 'w1', label: '1-mark written', match: function (r) { return r.type === 'short' && r.marks === 1; } },
   { k: 'w2', label: '2-mark written', match: function (r) { return r.type === 'short' && r.marks >= 2; } },
-  { k: 'long', label: 'Longer written (3+ marks)', match: function (r) { return r.type === 'long'; } },
+  { k: 'long', label: 'Longer written (3–4 marks)', match: function (r) { return r.type === 'long' && r.marks < 6; } },
+  { k: 'ext', label: 'Extended answers (6–8 marks)', match: function (r) { return r.type === 'long' && r.marks >= 6; } },
+  { k: 'code', label: 'Write / fix code (tested)', match: function (r) { return r.type === 'code'; } },
+  { k: 'table', label: 'Trace / truth tables', match: function (r) { return r.type === 'table'; } },
   { k: 'paper', label: 'Paper-only (diagrams, trace tables)', match: function (r) { return r.type === 'paper'; }, paperOnly: true }
 ];
 function gcseUnits() { return J277.list.filter(function (n) { return n.level === 1; }); }
@@ -1855,7 +1882,7 @@ async function gcseOpenBuilder(kind) {
   var covered = [];
   try { covered = await classCoveredTopics(gcse.className); } catch (e) {}
   gcse.builder = {
-    kind: kind, unit: '', paper: '', mode: 'online', types: { mcq: true, w1: true, w2: true, long: true, paper: false },
+    kind: kind, unit: '', paper: '', mode: 'online', types: { mcq: true, w1: true, w2: true, long: true, ext: kind === 'mock', code: true, table: true, paper: false },
     marks: kind === 'eou' ? 30 : 60, difficulty: '', includeStarter: true, topics: {}, items: [], covered: covered
   };
   gcseRenderBuilder();
@@ -1891,6 +1918,7 @@ function gcseRenderBuilder() {
   } else {
     h += '<div class="flex flex-wrap gap-2 items-center mb-2"><select id="gcse-b-paper" class="border border-gray-300 rounded px-2 py-1.5 text-sm"><option value="">Paper 1 and Paper 2</option><option value="1"' + (b.paper === '1' ? ' selected' : '') + '>Paper 1 only</option><option value="2"' + (b.paper === '2' ? ' selected' : '') + '>Paper 2 only</option></select>' +
       '<button type="button" id="gcse-b-covered" class="px-3 py-1.5 rounded border border-gray-300 text-sm"' + (b.covered.length ? '' : ' disabled title="Set content covered on the Class page first"') + '>Everything covered so far (' + b.covered.length + ' topics)</button>' +
+      '<button type="button" id="gcse-b-fullpaper" class="px-3 py-1.5 rounded border border-blue-300 bg-blue-50 text-blue-900 text-sm" title="80 marks, 1 hour 30 minutes, every question type, everything covered so far">Full exam paper (80 marks)</button>' +
       '<span class="text-xs text-gray-500">or tick topics:</span></div>' + gcseTopicPickerHtml('gcse-b', b.topics);
   }
   h += '</div>';
@@ -1949,7 +1977,8 @@ function gcseBuilderItem(v) {
   var t = GCSE_QTYPES.filter(function (x) { return x.match(r); })[0];
   return { bankId: r.id, type: r.type, typeLabel: t ? t.label : r.type, text: r.question, marks: r.marks, topics: r.topics.slice(), command: r.command || '',
     options: r.options.slice(), answerIndex: r.answerIndex, rules: r.rules || '', markScheme: r.markScheme || '', codes: (r.codes || []).slice(),
-    source: r.source || ('reworded from ' + r.rewordedFrom), family: (r.rewordedFrom || r.id).toLowerCase(), difficulty: r.difficulty || '' };
+    source: r.source || ('reworded from ' + r.rewordedFrom), family: (r.rewordedFrom || r.id).toLowerCase(), difficulty: r.difficulty || '',
+    codeTests: r.codeTests || null, model: r.model || null, starterCode: r.starterCode || null, table: r.table || null, answers: r.answers || null, indicative: r.indicative || null, sides: !!r.sides };
 }
 function gcseBuilderGenerate() {
   var b = gcse.builder;
@@ -1979,6 +2008,15 @@ function gcseBindBuilder() {
     b.topics = {};
     b.covered.forEach(function (t) { if (!b.paper || GcseCore.paperOf(t) === b.paper) b.topics[t] = true; });
     rerender();
+  };
+  // Full exam paper: like a real J277 paper – 80 marks in 1 h 30, every type of question (extended answers, code, tables).
+  if (gEl('gcse-b-fullpaper')) gEl('gcse-b-fullpaper').onclick = function () {
+    b.marks = 80; b.timeLimit = 90; b.title = '';
+    GCSE_QTYPES.forEach(function (t) { b.types[t.k] = !(t.paperOnly && b.mode === 'online'); });
+    if (b.covered.length) { b.topics = {}; b.covered.forEach(function (t) { if (!b.paper || GcseCore.paperOf(t) === b.paper) b.topics[t] = true; }); }
+    gcseRenderBuilder();
+    if (gcseBuilderTopics().length) gcseBuilderGenerate();
+    else { var msg = gEl('gcse-b-msg'); if (msg) msg.textContent = 'Set the content covered on the Class page, or tick topics, then press Generate.'; }
   };
   if (document.querySelector('.gcse-b-topic')) {
     gcseBindTopicPicker('gcse-b');
@@ -2038,7 +2076,8 @@ function gcseBuilderToTest() {
     boundaries: GcseCore.defaultBoundaries(total),
     questions: b.items.map(function (it, i) {
       return { id: 'Q' + (i + 1), marks: Number(it.marks) || 1, topics: it.topics, command: it.command, bankId: it.bankId, type: it.type, text: it.text,
-        options: it.options, answerIndex: it.answerIndex == null ? null : it.answerIndex, rules: it.rules, markScheme: it.markScheme, codes: it.codes, source: it.source };
+        options: it.options, answerIndex: it.answerIndex == null ? null : it.answerIndex, rules: it.rules, markScheme: it.markScheme, codes: it.codes, source: it.source,
+        codeTests: it.codeTests || null, model: it.model || null, starterCode: it.starterCode || null, table: it.table || null, answers: it.answers || null, indicative: it.indicative || null, sides: !!it.sides };
     })
   };
 }
@@ -2064,13 +2103,19 @@ function gcsePrintPaper(t, scheme) {
         return '<div class="q"><b>' + gEsc(q.id) + '</b> [' + q.marks + '] <span class="muted">' + gEsc(J277.label((q.topics || [])[0])) + (q.source ? ' · ' + gEsc(q.source) : '') + '</span><br>' +
           (q.type === 'mcq' && q.options ? 'Answer: ' + String.fromCharCode(65 + q.answerIndex) + '. ' + gEsc(q.options[q.answerIndex]) : gEsc(q.markScheme || '').replace(/\n/g, '<br>')) + '</div>';
       }
-      var lines = new Array(Math.max(2, (q.marks || 1) * 2) + 1).join('<div class="lines"></div>');
+      var lines = new Array(Math.max(2, (q.marks || 1) * (q.type === 'code' ? 3 : 2)) + 1).join('<div class="lines"></div>');
+      if (q.type === 'code' && q.starterCode) lines = '<pre style="border:1px solid #999;padding:6px;font-size:12px">' + gEsc(q.starterCode) + '</pre>' + lines;
+      if (q.type === 'table' && q.table) lines = gcsePrintTable(q.table);
       return '<div class="q"><b>' + gEsc(q.id) + '.</b> ' + gEsc(q.text || '').replace(/\n/g, '<br>') + ' <b>[' + q.marks + ']</b>' +
         (q.type === 'mcq' && q.options ? '<ol type="A">' + q.options.map(function (o) { return '<li>' + gEsc(o) + '</li>'; }).join('') + '</ol>' : lines) + '</div>';
     }).join('');
   gPrint(t.title + (scheme ? ' – Mark scheme' : ''), body);
 }
 
+function gcsePrintTable(tb) {
+  return '<table style="border-collapse:collapse;margin:6px 0"><tr>' + tb.head.map(function (h) { return '<th style="border:1px solid #333;padding:4px 10px">' + gEsc(h) + '</th>'; }).join('') + '</tr>' +
+    tb.rows.map(function (row, i) { return '<tr>' + row.map(function (c, j) { return '<td style="border:1px solid #333;padding:4px 10px;min-width:60px;height:22px;text-align:center">' + ((tb.blanks[i] || [])[j] ? '' : gEsc(c)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+}
 // ── Test generator (past-paper questions only) ──────────────────
 function gcseGeneratorPool() {
   var includeStarter = gcse.genIncludeStarter === true;
