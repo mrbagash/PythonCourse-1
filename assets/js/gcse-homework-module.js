@@ -50,12 +50,15 @@ function hwSeedTheta(key, grade, topicPct) {
   if (tp && tp.p >= 2) t += (tp.pct - 60) / 40 * 1.2;
   return Math.round(hwClamp(t, 0.5, 5.5) * 100) / 100;
 }
+// correct: true / false, or 0.5 for "right, but with help" (half credit; review again in 3 days).
 function hwUpdateMastery(m, level, correct, now) {
   m = Object.assign({ n: 0, c: 0, box: 0 }, m);
-  m.t = Math.round(hwClamp(m.t + 0.6 * ((correct ? 1 : 0) - hwP(m.t, level)), 0.5, 6) * 100) / 100;
-  m.n++; if (correct) m.c++;
+  var r = correct === true ? 1 : correct === false ? 0 : hwClamp(Number(correct) || 0, 0, 1);
+  m.t = Math.round(hwClamp(m.t + 0.6 * (r - hwP(m.t, level)), 0.5, 6) * 100) / 100;
+  m.n++; if (r >= 1) m.c++;
   m.last = now;
-  if (correct) { m.box = Math.min((m.box || 0) + 1, 4); m.next = now + [7, 14, 28, 56][m.box - 1] * 864e5; }
+  if (r >= 1) { m.box = Math.min((m.box || 0) + 1, 4); m.next = now + [7, 14, 28, 56][m.box - 1] * 864e5; }
+  else if (r > 0) { m.next = now + 3 * 864e5; }
   else { m.box = 0; m.next = now + 2 * 864e5; }
   return m;
 }
@@ -183,13 +186,188 @@ function hwMarkAnswer(q, answer) {
   return res;
 }
 
+// ── H7 scaffolding ──────────────────────────────────────────────────────────
+// Support levels (set by the teacher, suggested by the app): 0 none · 1 some help · 2 lots of help.
+// Every question has a help ladder; more help is shown up front at higher levels, and it fades
+// skill by skill: two right in a row with only the up-front help → one step less next time.
+// A right answer that used help counts half towards mastery. Pupils can always ask for a hint.
+var HW_SUPPORT = [{ id: 0, label: 'None', auto: 0 }, { id: 1, label: 'Some help', auto: 1 }, { id: 2, label: 'Lots of help', auto: 3 }];
+function hwHashPick(id, n) { var h = 0; String(id).split('').forEach(function (c) { h = (h * 31 + c.charCodeAt(0)) >>> 0; }); return n ? h % n : 0; }
+function hwReminderFor(q) {
+  var t = (q.topics || [])[0] || '', sk = q.skill || '';
+  if (typeof GCSE_REMIND === 'undefined') return '';
+  return GCSE_REMIND[t + '~' + sk] || GCSE_REMIND[t] || '';
+}
+// Gap-fill version of the mark scheme: key words become "v_______" (first letter kept).
+function hwCloze(q) {
+  var keys = {};
+  try {
+    GcseCore.parseRules(q.rules || '').points.forEach(function (p) {
+      if (p.kind === 'keyword') p.groups.forEach(function (g) { g.forEach(function (alt) { alt.forEach(function (w) { if (w.length >= 3) keys[w] = true; }); }); });
+      else (p.accept || []).forEach(function (a) { if (a.main && a.main.length >= 3) keys[a.main] = true; });
+    });
+  } catch (e) {}
+  var lines = String(q.markScheme || '').replace(/\s*\(\d\)/g, '').split(/\n|;\s*/).map(function (l) { return l.trim(); }).filter(Boolean).slice(0, Math.max(1, q.marks || 1));
+  var blanked = 0;
+  var out = lines.map(function (line) {
+    return line.replace(/[A-Za-z][A-Za-z'-]{2,}/g, function (w) {
+      if (!keys[GcseCore.stem(w.toLowerCase())]) return w;
+      blanked++;
+      return w.charAt(0) + '<span class="tracking-widest text-gray-400">' + new Array(Math.min(w.length, 10)).join('_') + '</span>';
+    });
+  });
+  return blanked ? out : null;
+}
+// Method without the answer, for number questions.
+function hwMethodHint(q) {
+  var t = (q.topics || [])[0] || '', sk = q.skill || '', qt = String(q.question || '');
+  var bin = qt.match(/\b[01]{8}\b/g) || [];
+  var head = '<tr>' + [128, 64, 32, 16, 8, 4, 2, 1].map(function (p) { return '<th class="px-1.5 font-normal text-gray-500">' + p + '</th>'; }).join('') + '</tr>';
+  var cells = function (b) { return '<tr>' + b.split('').map(function (d) { return '<td class="px-1.5 text-center font-mono">' + d + '</td>'; }).join('') + '</tr>'; };
+  if (t === '1.2.4a' && sk === 'b2d' && bin.length) return 'Put the place values over the bits, then add up the place values that have a 1:<table class="text-xs my-1">' + head + cells(bin[0]) + '</table>';
+  if (t === '1.2.4a' && sk === 'd2b') { var n = (qt.match(/denary number (\d+)/i) || [])[1]; return 'Start at 128. Does it fit into ' + gEsc(n || 'the number') + '? If yes write 1 and take it away; if no write 0. Then try 64, 32 … down to 1.<table class="text-xs my-1">' + head + cells('________') + '</table>'; }
+  if (t === '1.2.4b' && bin.length >= 2) return 'Line them up and add from the RIGHT, writing each carry above the next column:<pre class="font-mono text-xs my-1">  ' + bin[0] + '\n+ ' + bin[1] + '\n  ________</pre>';
+  if (t === '1.2.4d' && bin.length) { var k = (qt.match(/(\d)[- ]place/) || [])[1] || '1', left = /left/i.test(qt); return 'Write ' + bin[0] + ', then move EVERY bit ' + k + ' place' + (k === '1' ? '' : 's') + ' to the ' + (left ? 'left' : 'right') + '. Fill the empty places with 0s.'; }
+  if (t === '1.2.4c') {
+    if (/hexadecimal number/i.test(qt)) return '(Left digit × 16) + right digit. Letters: A = 10, B = 11, C = 12, D = 13, E = 14, F = 15.';
+    if (/denary number/i.test(qt)) return 'Divide by 16. The whole-number answer is the LEFT hex digit; the remainder is the RIGHT digit (10–15 become A–F).';
+    if (bin.length) return 'Split into two nibbles: <span class="font-mono">' + bin[0].slice(0, 4) + ' ' + bin[0].slice(4) + '</span>. Convert each one using 8 4 2 1, then turn 10–15 into A–F.';
+  }
+  if (t === '1.2.3c') return 'Multiply the numbers that describe the file (e.g. width × height × colour depth, or sample rate × bit depth × seconds) to get BITS. ÷ 8 → bytes. ÷ 1000 → KB, ÷ 1000 again → MB.';
+  if (/ASC\(/i.test(qt)) return 'Character codes are in alphabetical order: count on one at a time from the code you are given.';
+  return '';
+}
+function hwSimilar(q) {
+  var S = HW.session, list = (S && S.ctx.bank[hwKey(q.topics[0], q.skill || '')]) || [];
+  var others = list.filter(function (r) { return r.id !== q.id && !(S.used || {})[r.id]; });
+  if (!others.length) others = gcseStarterRows().filter(function (r) { return r.id !== q.id && r.topics[0] === q.topics[0] && (r.type === 'mcq' || r.type === 'short'); });
+  if (!others.length) return null;
+  others.sort(function (a, b) { return (a.type === q.type ? 0 : 1) - (b.type === q.type ? 0 : 1) || Math.abs(hwLevelOf(a) - hwLevelOf(q)) - Math.abs(hwLevelOf(b) - hwLevelOf(q)); });
+  return others[0];
+}
+// The ladder for one question: [{ key, label, html, apply? }]
+function hwScaffolds(q) {
+  var steps = [];
+  var frame = (typeof GCSE_FRAMES !== 'undefined' && GCSE_FRAMES[q.command]) || null;
+  var what = q.type === 'mcq' ? 'Pick ONE answer. Read every option before you choose – cover the options and try to answer first.'
+    : (frame ? frame.means : 'Answer exactly what the question asks.') + (q.marks > 1 ? ' It is worth ' + q.marks + ' marks, so make ' + q.marks + ' separate points.' : '');
+  steps.push({ key: 'what', label: 'What the question wants', html: gEsc(what) });
+  var rem = hwReminderFor(q);
+  if (rem) steps.push({ key: 'remind', label: 'Remember', html: gEsc(rem) });
+  if (q.type === 'mcq') {
+    if ((q.options || []).length >= 4) steps.push({ key: 'fifty', label: 'Two wrong answers removed', html: 'Two of the wrong answers have been crossed out. Choose between the two that are left.', apply: function () {
+      var ai = q.answerIndex, wrong = q.options.map(function (o, i) { return i; }).filter(function (i) { return i !== ai; });
+      var keep = wrong[hwHashPick(q.id, wrong.length)];
+      document.querySelectorAll('.hw-opt').forEach(function (b) { var i = Number(b.dataset.i); if (i !== ai && i !== keep) { b.disabled = true; b.classList.add('line-through', 'opacity-40'); } });
+    } });
+  } else {
+    var method = hwMethodHint(q);
+    if (method) steps.push({ key: 'method', label: 'How to do it', html: method });
+    else {
+      var cloze = hwCloze(q);
+      if (cloze) steps.push({ key: 'cloze', label: 'Fill the gaps', html: 'A good answer looks like this – work out the missing words:<ul class="list-disc ml-5 mt-1">' + cloze.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>' });
+      else if (frame && frame.starter) steps.push({ key: 'starter', label: 'Sentence starter', html: 'Start like this: <i>' + gEsc(frame.starter) + '</i>' });
+    }
+  }
+  var ex = hwSimilar(q);
+  if (ex) {
+    var exAns = ex.type === 'mcq' ? (function () { var ai = ex.answer ? ex.answer.charCodeAt(0) - 65 : ex.answerIndex; var wi = ex.options.map(function (o, i) { return i; }).filter(function (i) { return i !== ai && (ex.why || [])[i]; })[0]; return 'Answer: <b>' + gEsc(ex.options[ai]) + '</b>' + (wi != null ? '<div class="text-xs text-gray-600">Not “' + gEsc(ex.options[wi]) + '”: ' + gEsc(ex.why[wi]) + '</div>' : ''); })()
+      : 'A full-mark answer: <div class="whitespace-pre-wrap">' + gEsc(String(ex.markScheme || '').replace(/\s*\(\d\)/g, '')) + '</div>';
+    steps.push({ key: 'example', label: 'Worked example (a similar question)', html: '<div class="whitespace-pre-wrap italic' + (/\n/.test(ex.question) ? ' font-mono text-xs' : '') + '">' + gEsc(ex.question) + '</div><div class="mt-1">' + exAns + '</div>' });
+  }
+  return steps;
+}
+function hwShowStep(i) {
+  var S = HW.session, H = S.help, st = H.steps[i]; if (!st) return;
+  var box = gEl('hw-help-steps'); if (!box) return;
+  var div = document.createElement('div');
+  div.className = 'hw-step rounded border border-blue-200 bg-blue-50 text-blue-950 p-2 text-sm';
+  div.dataset.key = st.key;
+  div.innerHTML = '<div class="text-xs font-semibold text-blue-800">💡 ' + gEsc(st.label) + '</div><div class="mt-0.5">' + st.html + '</div>';
+  box.appendChild(div);
+  if (st.apply) try { st.apply(); } catch (e) {}
+  H.shown = i + 1;
+  var btn = gEl('hw-hint');
+  if (btn) { var left = H.steps.length - H.shown; btn.textContent = left ? '💡 ' + (H.shown ? 'More help' : 'Need a hint?') + ' (' + left + ' left)' : '💡 No more hints'; btn.disabled = !left; }
+}
+function hwAutoHelp(key) {
+  var S = HW.session, lvl = HW_SUPPORT[S.support || 0] || HW_SUPPORT[0];
+  var f = ((S.fade || {})[key] || {}).f || 0;
+  return Math.max(0, lvl.auto - f);
+}
+// Two right in a row with only the up-front help → one step less next time; wrong → one step more.
+function hwUpdateFade(prev, ok, usedExtra) {
+  var x = { f: (prev && prev.f) || 0, s: (prev && prev.s) || 0 };
+  if (ok && !usedExtra) { x.s++; if (x.s >= 2) { x.f = Math.min(x.f + 1, 3); x.s = 0; } }
+  else if (!ok) { x.s = 0; x.f = Math.max(0, x.f - 1); }
+  else x.s = 0;
+  return x;
+}
+// Reading support (all pupils): read aloud + easier reading (bigger, spaced text on a cream background).
+function hwEasyRead(on) {
+  if (!gEl('hw-easy-style')) { var st = document.createElement('style'); st.id = 'hw-easy-style'; st.textContent = '#modal-hw .hw-easy{font-size:1.08rem;line-height:1.85;letter-spacing:.03em;word-spacing:.12em;background:#fbf5e6}#modal-hw .hw-easy .font-mono{letter-spacing:0}'; document.head.appendChild(st); }
+  var b = gEl('hw-body'); if (b) b.classList.toggle('hw-easy', !!on);
+  try { localStorage.setItem('hwEasyRead', on ? '1' : ''); } catch (e) {}
+}
+function hwEasyReadOn() { try { return localStorage.getItem('hwEasyRead') === '1'; } catch (e) { return false; } }
+function hwSpeak(text) {
+  try {
+    if (!window.speechSynthesis) return false;
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB'; u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+    return true;
+  } catch (e) { return false; }
+}
+// Suggested support level from the last 3 homeworks (right first time + how often help was needed).
+function hwSuggestSupport(hw, current) {
+  var ids = Object.keys(hw || {}).filter(function (id) { return hw[id] && hw[id].answers; }).sort(function (a, b) { return (hw[b].startedAt || 0) - (hw[a].startedAt || 0); }).slice(0, 3);
+  var first = [];
+  ids.forEach(function (id) { Object.keys(hw[id].answers).forEach(function (n) { var a = hw[id].answers[n]; if (a && !a.retry) first.push(a); }); });
+  if (first.length < 5) return { level: null, acc: null, help: null, n: first.length };
+  var acc = first.filter(function (a) { return a.ok; }).length / first.length;
+  var help = first.filter(function (a) { return a.h; }).length / first.length;
+  var lvl = acc < 0.4 ? 2 : (acc < 0.6 || help > 0.5) ? 1 : (acc >= 0.75 && help < 0.2) ? 0 : (current || 0);
+  return { level: lvl, acc: Math.round(acc * 100), help: Math.round(help * 100), n: first.length };
+}
+function hwSupportCardHtml(H) {
+  var rows = H.codes.map(function (c) {
+    var cur = Number((H.support || {})[c]) || 0, sg = hwSuggestSupport((H.progs[c] || {}).hw, cur);
+    return { code: c, name: gName(c) || c, cur: cur, sg: sg };
+  }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+  var pending = rows.filter(function (r) { return r.sg.level != null && r.sg.level !== r.cur; });
+  return '<details class="hw-support border border-gray-200 rounded-lg mb-4"' + (pending.length ? ' open' : '') + '><summary class="cursor-pointer px-3 py-2 text-sm"><b>Support levels</b> <span class="text-xs text-gray-500">– how much help each pupil gets in homework' + (pending.length ? ' · <span class="text-amber-700">' + pending.length + ' suggestion' + (pending.length === 1 ? '' : 's') + '</span>' : '') + '</span></summary><div class="px-3 pb-3">' +
+    '<p class="text-xs text-gray-600 mb-2"><b>None</b>: hints only when asked. <b>Some help</b>: what the question wants is shown up front. <b>Lots of help</b>: what it wants, a reminder and a structure (gap-fill, method or two options removed) up front, and shorter homework (12 max). Help fades skill by skill after two right in a row. Suggestions come from the last 3 homeworks – nothing changes until you choose.</p>' +
+    (pending.length ? '<button type="button" id="hw-support-all" class="text-xs px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-900 mb-2">Use all ' + pending.length + ' suggestions</button>' : '') +
+    '<div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50 text-left"><th class="p-1">Pupil</th><th class="p-1">Support</th><th class="p-1 text-center">Right first time</th><th class="p-1 text-center">Needed help</th><th class="p-1">Suggestion</th></tr>' +
+    rows.map(function (r) {
+      return '<tr class="hw-sup-row border-t" data-code="' + gEsc(r.code) + '"><td class="p-1">' + gEsc(r.name) + '</td><td class="p-1"><select class="hw-sup-sel border border-gray-300 rounded px-1 py-0.5" data-code="' + gEsc(r.code) + '">' + HW_SUPPORT.map(function (s) { return '<option value="' + s.id + '"' + (s.id === r.cur ? ' selected' : '') + '>' + s.label + '</option>'; }).join('') + '</select></td>' +
+        '<td class="p-1 text-center">' + (r.sg.acc == null ? '–' : r.sg.acc + '%') + '</td><td class="p-1 text-center">' + (r.sg.help == null ? '–' : r.sg.help + '%') + '</td>' +
+        '<td class="p-1">' + (r.sg.level != null && r.sg.level !== r.cur ? '<button type="button" class="hw-sup-use underline text-amber-800" data-code="' + gEsc(r.code) + '" data-level="' + r.sg.level + '">' + HW_SUPPORT[r.sg.level].label + ' – use</button>' : '<span class="text-gray-400">' + (r.sg.level == null ? 'not enough homework yet' : 'keep') + '</span>') + '</td></tr>';
+    }).join('') + '</table></div></div></details>';
+}
+async function hwSetSupport(className, code, level) {
+  await state.db.ref('classes/' + className + '/hwSupport/' + code).set(Number(level) ? Number(level) : null);
+}
+// Independence: share of first-try answers given without help, per homework.
+function hwIndependenceHtml(hw, set, setIds, level) {
+  var rows = setIds.filter(function (id) { return hw[id] && hw[id].answers; }).map(function (id) {
+    var first = Object.keys(hw[id].answers).map(function (n) { return hw[id].answers[n]; }).filter(function (a) { return a && !a.retry; });
+    return { title: set[id].title, pct: first.length ? Math.round(first.filter(function (a) { return !a.h; }).length / first.length * 100) : null, helped: first.filter(function (a) { return a.h; }).length, n: first.length };
+  });
+  return '<div class="text-xs text-gray-600 mb-2">Support level: <b>' + gEsc((HW_SUPPORT[level || 0] || HW_SUPPORT[0]).label) + '</b> · questions answered without any help:</div>' + (rows.length ? rows.map(function (x) {
+    return '<div class="hw-indep flex items-center gap-2 text-sm mb-1"><span class="w-40 truncate">' + gEsc(x.title) + '</span><div class="flex-1 h-2.5 bg-gray-100 rounded"><div class="h-2.5 rounded bg-blue-600" style="width:' + (x.pct || 0) + '%"></div></div><span class="w-16 text-right text-xs">' + (x.pct == null ? '–' : x.pct + '%') + '</span></div>';
+  }).join('') : '<p class="text-sm text-gray-500">No homework answers yet.</p>');
+}
+
 // ── H3 pupil ────────────────────────────────────────────────────────────────
 async function hwStudentContext() {
   var uid = state.uid, cls = state.className;
   var r = await Promise.all([
     state.db.ref('classes/' + cls + '/homework').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
     state.db.ref('classes/' + cls + '/settings/covered').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
-    state.db.ref('progress/' + uid).get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
+    state.db.ref('progress/' + uid).get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('classes/' + cls + '/hwSupport/' + uid).get().then(function (s) { return Number(s.val()) || 0; }).catch(function () { return 0; })
   ]);
   var prog = r[2];
   var assessments = prog.assessments || {};
@@ -201,7 +379,7 @@ async function hwStudentContext() {
   var plcOver = {};
   Object.keys(prog.plc || {}).forEach(function (k) { var tc = gFromTopicKey(k), sc = topicPct[tc]; if (prog.plc[k] && prog.plc[k].r === 'green' && sc && sc.pct < 50) plcOver[tc] = true; });
   return { homework: r[0], covered: covered, recent: recent, mastery: prog.mastery || {}, hw: prog.hw || {}, grade: grade, topicPct: topicPct,
-    misc: prog.gcseMisconceptions || {}, plc: plcOver };
+    misc: prog.gcseMisconceptions || {}, plc: plcOver, support: hwClamp(r[3], 0, 2), fade: prog.hwFade || {} };
 }
 function hwOpenList(ctx) {
   var now = Date.now();
@@ -250,7 +428,8 @@ async function hwOpen(hwId) {
   var rec = ctx.hw[hwId];
   var ref = state.db.ref('progress/' + state.uid + '/hw/' + hwId);
   if (!rec || !rec.queue) {
-    var plan = hwBuildPlan(ctx, meta.size || HW.size);
+    // Lots of help → a shorter homework (at most 12).
+    var plan = hwBuildPlan(ctx, ctx.support >= 2 ? Math.min(meta.size || HW.size, 12) : meta.size || HW.size);
     if (!plan.length) { body.innerHTML = '<p class="text-sm text-gray-500">There are no questions for the topics you have been taught yet. Ask your teacher.</p>'; return; }
     rec = { startedAt: Date.now(), size: plan.length, queue: plan.map(function (k, i) { return { k: k, s: i, r: 0 }; }), pos: 0, cleared: 0, ms: 0, slots: {} };
     await ref.set(rec);
@@ -258,7 +437,7 @@ async function hwOpen(hwId) {
   rec.queue = GcseCore.asList(rec.queue); rec.slots = rec.slots || {};
   var seen = {};
   Object.keys(ctx.hw).forEach(function (id) { Object.keys((ctx.hw[id] || {}).answers || {}).forEach(function (n) { var a = ctx.hw[id].answers[n]; if (a && a.qid) seen[a.qid] = true; }); });
-  HW.session = { id: hwId, meta: meta, rec: rec, ctx: ctx, ref: ref, seen: seen, used: {}, streak: {}, bump: {} };
+  HW.session = { id: hwId, meta: meta, rec: rec, ctx: ctx, ref: ref, seen: seen, used: {}, streak: {}, bump: {}, support: ctx.support || 0, fade: ctx.fade || {} };
   Object.keys(rec.answers || {}).forEach(function (n) { var a = rec.answers[n]; if (a && a.qid) HW.session.used[a.qid] = true; });
   gEl('hw-sub').textContent = 'Due ' + hwFmtDate(meta.dueAt) + ' · questions picked for you';
   hwNext();
@@ -282,11 +461,22 @@ function hwNext() {
   S.q = q; S.item = item; S.used[q.id] = true;
   var code = String(q.question).indexOf('\n') !== -1;
   var num = (rec.cleared || 0) + 1;
-  body.innerHTML = '<div class="text-xs text-gray-500 mb-1">Question ' + Math.min(num, rec.size) + ' of ' + rec.size + ' · ' + gEsc(hwKeyLabel(item.k)) + ' · ' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + (item.r ? ' · <span class="text-amber-700">try again</span>' : '') + '</div>' +
+  S.help = { steps: hwScaffolds(q), shown: 0, auto: 0 };
+  body.innerHTML = '<div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 mb-1"><span>Question ' + Math.min(num, rec.size) + ' of ' + rec.size + ' · ' + gEsc(hwKeyLabel(item.k)) + ' · ' + q.marks + ' mark' + (q.marks === 1 ? '' : 's') + (item.r ? ' · <span class="text-amber-700">try again</span>' : '') + '</span>' +
+    '<span class="ml-auto flex gap-1"><button type="button" id="hw-read" class="px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50" title="Read the question aloud">🔊 Read aloud</button><button type="button" id="hw-easy" class="px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50" title="Bigger, more spaced text">Aa Easier reading</button></span></div>' +
     '<div id="hw-q" class="font-semibold text-gray-800 mb-3 whitespace-pre-wrap' + (code ? ' font-mono text-sm bg-gray-50 rounded p-2' : '') + '">' + gEsc(q.question) + '</div>' +
+    '<div id="hw-help" class="mb-3"><div id="hw-help-steps" class="space-y-2"></div>' + (S.help.steps.length ? '<button type="button" id="hw-hint" class="mt-2 text-xs px-2 py-1 rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-50">💡 Need a hint? (' + S.help.steps.length + ' left)</button>' : '') + '</div>' +
     (q.type === 'mcq' ? '<div class="grid gap-2">' + q.options.map(function (o, i) { return '<button type="button" class="hw-opt text-left px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-pre-wrap" data-i="' + i + '">' + String.fromCharCode(65 + i) + '. ' + gEsc(o) + '</button>'; }).join('') + '</div>'
       : '<textarea id="hw-answer" rows="3" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" placeholder="Type your answer"></textarea><button type="button" id="hw-submit" class="jhncc-primary mt-2 px-4 py-1.5 rounded text-sm font-semibold">Check</button>') +
     '<div id="hw-result" class="mt-3"></div>';
+  hwEasyRead(hwEasyReadOn());
+  gEl('hw-easy').onclick = function () { hwEasyRead(!hwEasyReadOn()); };
+  gEl('hw-read').onclick = function () { hwSpeak(q.question.replace(/\n/g, '. ') + (q.type === 'mcq' ? '. ' + q.options.map(function (o, i) { return String.fromCharCode(65 + i) + ': ' + o; }).join('. ') : '')); };
+  // Help shown up front for this pupil's support level (less as they get things right on this skill).
+  var autoN = Math.min(hwAutoHelp(item.k), S.help.steps.length);
+  for (var i = 0; i < autoN; i++) hwShowStep(i);
+  S.help.auto = S.help.shown;
+  if (gEl('hw-hint')) gEl('hw-hint').onclick = function () { hwShowStep(S.help.shown); };
   hwStartTracking();
   if (q.type === 'mcq') body.querySelectorAll('.hw-opt').forEach(function (b) { b.onclick = function () { body.querySelectorAll('.hw-opt').forEach(function (x) { x.disabled = true; }); hwSubmit(b.dataset.i); }; });
   else gEl('hw-submit').onclick = function () { var a = gEl('hw-answer').value.trim(); if (!a) return; gEl('hw-submit').disabled = true; gEl('hw-answer').disabled = true; hwSubmit(a); };
@@ -302,9 +492,14 @@ async function hwSubmit(answer) {
   // Mastery only changes for answers that look independent (pupils are not told).
   var key = item.k, m0 = S.ctx.mastery[key];
   var level = hwLevelOf(q);
+  var help = S.help || { shown: 0, auto: 0 };
+  var helped = help.shown > 0;
+  // Help fades skill by skill (visible to the pupil – unlike the activity log).
+  S.fade[key] = hwUpdateFade(S.fade[key], res.ok, help.shown > help.auto);
+  state.db.ref('progress/' + state.uid + '/hwFade/' + key).set(S.fade[key]).catch(function () {});
   if (independent) {
     var base = m0 && m0.t != null ? m0 : { t: hwSeedTheta(key, S.ctx.grade, S.ctx.topicPct), t0: hwSeedTheta(key, S.ctx.grade, S.ctx.topicPct) };
-    var m1 = hwUpdateMastery(base, level, res.ok, now);
+    var m1 = hwUpdateMastery(base, level, res.ok ? (helped ? 0.5 : true) : false, now);
     if (m1.t0 == null) m1.t0 = base.t;
     S.ctx.mastery[key] = m1;
     state.db.ref('progress/' + state.uid + '/mastery/' + key).set(m1).catch(function () {});
@@ -314,7 +509,7 @@ async function hwSubmit(answer) {
   else { S.streak[key] = 0; S.bump[key] = Math.min(0, (S.bump[key] || 0) - 1); }
   var n = Object.keys(rec.answers || {}).length;
   var upd = {};
-  upd['answers/' + n] = { qid: q.id, k: key, lvl: level, ok: res.ok, mk: res.mark, mx: res.max, ms: ms, at: now, retry: item.r || 0, codes: res.codes && res.codes.length ? res.codes : null };
+  upd['answers/' + n] = { qid: q.id, k: key, lvl: level, ok: res.ok, mk: res.mark, mx: res.max, ms: ms, at: now, retry: item.r || 0, codes: res.codes && res.codes.length ? res.codes : null, h: help.shown || null, ha: help.auto || null };
   rec.answers = rec.answers || {}; rec.answers[n] = upd['answers/' + n];
   rec.ms = (rec.ms || 0) + ms; upd.ms = rec.ms;
   if (res.ok) { rec.slots[item.s] = { cleared: true }; rec.cleared = (rec.cleared || 0) + 1; upd['slots/' + item.s] = { cleared: true }; upd.cleared = rec.cleared; }
@@ -325,7 +520,8 @@ async function hwSubmit(answer) {
   rec.pos++; upd.pos = rec.pos;
   S.ref.update(upd).catch(function () {});
   if (typeof gcseRecordQuizAttempt === 'function' && independent) { try { gcseRecordQuizAttempt({ gcseQid: q.id, gcseTopics: q.topics, q: q.question, gcseCodes: res.codes }, q.type === 'mcq' ? q.options[Number(answer)] : answer, { marks: res.mark, max: res.max }, 'practice'); } catch (e) {} }
-  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + '<button type="button" id="hw-next" class="mt-3 px-4 py-1.5 rounded border border-gray-300 text-sm font-semibold">Next →</button>';
+  if (gEl('hw-hint')) gEl('hw-hint').disabled = true;
+  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<button type="button" id="hw-next" class="mt-3 px-4 py-1.5 rounded border border-gray-300 text-sm font-semibold">Next →</button>';
   hwProgressBar();
   gEl('hw-next').onclick = hwNext;
 }
@@ -407,7 +603,9 @@ async function hwLoadClass(className) {
   await Promise.all(Object.keys(homework).map(function (id) {
     return state.db.ref('gcse/hwLog/' + id).get().then(function (s) { logs[id] = s.val() || {}; }).catch(function () { logs[id] = {}; });
   }));
-  return { className: className, codes: codes, homework: homework, progs: progs, logs: logs, created: created };
+  var support = (await state.db.ref('classes/' + className + '/hwSupport').get().catch(function () { return null; }));
+  support = support && support.val ? support.val() || {} : {};
+  return { className: className, codes: codes, homework: homework, progs: progs, logs: logs, created: created, support: support };
 }
 function hwActivitySummary(logEntries) {
   var by = {};
@@ -426,7 +624,8 @@ function hwPupilRow(H, id, code) {
   var log = hwActivitySummary((H.logs[id] || {})[code]);
   var status = rec && rec.doneAt ? (rec.doneAt > meta.dueAt ? 'late' : 'done') : rec && rec.startedAt ? 'partial' : 'not started';
   return { code: code, name: gName(code) || code, status: status, cleared: rec ? rec.cleared || 0 : 0, size: rec ? rec.size || meta.size : meta.size,
-    acc: first.length ? Math.round(first.filter(function (a) { return a.ok; }).length / first.length * 100) : null, mins: rec ? Math.round((rec.ms || 0) / 60000) : 0, log: log };
+    acc: first.length ? Math.round(first.filter(function (a) { return a.ok; }).length / first.length * 100) : null, mins: rec ? Math.round((rec.ms || 0) / 60000) : 0, log: log,
+    helped: first.filter(function (a) { return a.h; }).length, answered: first.length, support: Number((H.support || {})[code]) || 0 };
 }
 async function hwClassTabRender(body, className, settings) {
   body.innerHTML = '<p class="text-gray-400 text-sm">Loading homework…</p>';
@@ -443,6 +642,7 @@ async function hwClassTabRender(body, className, settings) {
     '<label class="text-xs text-gray-600">Leave out (optional)<input id="hw-excl" placeholder="e.g. 1.6" class="block w-36 border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
     '<button type="button" id="hw-set" class="jhncc-primary px-4 py-1.5 rounded font-semibold">Set homework</button>' +
     '<label class="text-xs flex items-center gap-1 ml-auto"><input type="checkbox" id="hw-auto"' + (auto.on ? ' checked' : '') + '> Auto-set weekly</label><span id="hw-msg" class="text-xs text-gray-600">' + (H.created ? 'This week\'s homework was set automatically.' : '') + '</span></div></div>';
+  h += hwSupportCardHtml(H);
   if (!ids.length) h += '<p class="text-sm text-gray-500 mb-4">No homework set yet.</p>';
   ids.forEach(function (id, i) {
     var meta = H.homework[id];
@@ -453,17 +653,24 @@ async function hwClassTabRender(body, className, settings) {
     h += '<details class="hw-item border border-gray-200 rounded-lg mb-3"' + (i === 0 ? ' open' : '') + '><summary class="cursor-pointer px-3 py-2 flex flex-wrap items-center gap-2 text-sm"><b>' + gEsc(meta.title) + '</b><span class="text-xs text-gray-500">due ' + gEsc(hwFmtDate(meta.dueAt)) + ' · ' + (meta.size || HW.size) + ' questions' + (meta.pins ? ' · focus ' + gEsc(GcseCore.asList(meta.pins).join(', ')) : '') + '</span>' +
       '<span class="ml-auto text-xs ' + (done === rows.length ? 'text-green-700' : overdue ? 'text-red-700' : 'text-gray-600') + '">' + done + '/' + rows.length + ' done</span></summary><div class="px-3 pb-3">' +
       (overdue && chase.length ? '<div class="text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2"><b>Chase (' + chase.length + '):</b> ' + chase.map(function (r) { return gEsc(r.name) + (r.status === 'partial' ? ' (' + r.cleared + '/' + r.size + ')' : ''); }).join(', ') + '</div>' : '') +
-      '<div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50 text-left"><th class="p-1">Pupil</th><th class="p-1">Status</th><th class="p-1 text-center">Progress</th><th class="p-1 text-center">Right first time</th><th class="p-1 text-center">Minutes</th><th class="p-1">Activity (only you can see this)</th></tr>' +
+      '<div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50 text-left"><th class="p-1">Pupil</th><th class="p-1">Status</th><th class="p-1 text-center">Progress</th><th class="p-1 text-center">Right first time</th><th class="p-1 text-center">Minutes</th><th class="p-1 text-center">Help used</th><th class="p-1">Activity (only you can see this)</th></tr>' +
       rows.map(function (r) {
         var st = { done: 'text-green-700', late: 'text-amber-700', partial: 'text-blue-700', 'not started': 'text-gray-500' }[r.status];
         return '<tr class="hw-row border-t" data-code="' + gEsc(r.code) + '"><td class="p-1"><button type="button" class="gcse-profile-link hover:underline" data-code="' + gEsc(r.code) + '">' + gEsc(r.name) + '</button></td><td class="p-1 ' + st + '">' + r.status + '</td>' +
-          '<td class="p-1 text-center">' + r.cleared + '/' + r.size + '</td><td class="p-1 text-center">' + (r.acc == null ? '–' : r.acc + '%') + '</td><td class="p-1 text-center">' + r.mins + '</td>' +
+          '<td class="p-1 text-center">' + r.cleared + '/' + r.size + '</td><td class="p-1 text-center">' + (r.acc == null ? '–' : r.acc + '%') + '</td><td class="p-1 text-center">' + r.mins + '</td><td class="p-1 text-center hw-helped">' + (r.answered ? r.helped + '/' + r.answered : '–') + (r.support ? ' <span class="text-blue-700" title="Support level">(' + HW_SUPPORT[r.support].label.toLowerCase() + ')</span>' : '') + '</td>' +
           '<td class="p-1 hw-activity ' + (r.log.count ? 'text-red-800' : 'text-gray-400') + '">' + (r.log.count ? gEsc(r.log.text) : 'nothing unusual') + '</td></tr>';
       }).join('') + '</table></div><p class="text-[11px] text-gray-500 mt-1">Activity is logged silently during homework only. Treat it as something to look into, not proof – answers flagged here do not count towards mastery.</p></div></details>';
   });
   h += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="border border-gray-200 rounded-lg p-3">' + hwClassNeedsHtml(H) + '</div><div class="border border-gray-200 rounded-lg p-3" id="hw-class-impact"><p class="text-xs text-gray-400">Working out whether homework is helping…</p></div></div>';
   body.innerHTML = h;
   body.querySelectorAll('.gcse-profile-link').forEach(function (b) { b.onclick = function () { openGcseProfile(b.dataset.code); }; });
+  var rerender = function () { hwClassTabRender(body, className, settings); };
+  body.querySelectorAll('.hw-sup-sel').forEach(function (sel) { sel.onchange = async function () { try { await hwSetSupport(className, sel.dataset.code, sel.value); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); } }; });
+  body.querySelectorAll('.hw-sup-use').forEach(function (b) { b.onclick = async function () { try { await hwSetSupport(className, b.dataset.code, b.dataset.level); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); } }; });
+  if (gEl('hw-support-all')) gEl('hw-support-all').onclick = async function () {
+    var btns = Array.prototype.slice.call(body.querySelectorAll('.hw-sup-use'));
+    try { await Promise.all(btns.map(function (b) { return hwSetSupport(className, b.dataset.code, b.dataset.level); })); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); }
+  };
   var parseCodes = function (v) { return String(v || '').split(/[,\s]+/).map(function (x) { return x.trim(); }).filter(function (x) { return x && J277.get(x); }); };
   gEl('hw-set').onclick = async function () {
     var dueAt = new Date(gEl('hw-due').value + 'T21:00:00').getTime() || Date.now() + HW.dueDays * 864e5;
@@ -585,6 +792,10 @@ async function hwProfileRender(D) {
     return '<div class="flex items-center gap-2 text-sm mb-1"><span class="w-40 truncate">' + gEsc(x.title) + '</span><div class="flex-1 h-2.5 bg-gray-100 rounded"><div class="h-2.5 rounded" style="width:' + (x.pct || 0) + '%;background:rgb(176,28,35)"></div></div><span class="w-10 text-right text-xs">' + (x.pct == null ? '–' : x.pct + '%') + '</span></div>';
   }).join('') : '<p class="text-sm text-gray-500">No homework answers yet.</p>') + '</div>' +
     '<div class="border border-gray-200 rounded-lg p-3"><h4 class="font-bold mb-2">Retention</h4>' + hwRetentionHtml(answers) + '</div></div>';
+  var supLevel = 0;
+  if (D.className) { var sv = await state.db.ref('classes/' + D.className + '/hwSupport/' + D.code).get().catch(function () { return null; }); supLevel = sv && sv.val ? Number(sv.val()) || 0 : 0; }
+  if (!gEl('hw-prof')) return;
+  h += '<div class="border border-gray-200 rounded-lg p-3 mt-4"><h4 class="font-bold mb-1">Independence</h4>' + hwIndependenceHtml(hw, set, setIds, supLevel) + '</div>';
   box.innerHTML = h;
 }
 function hwTestsFromHistory(history) {
