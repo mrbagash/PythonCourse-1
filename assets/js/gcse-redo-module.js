@@ -498,13 +498,6 @@ async function redoLoadNotifications(force) {
   REDO.notify = { at: Date.now(), items: items };
   return REDO.notify;
 }
-function redoNotifyBadge(n) {
-  var tab = gEl('admin-tab-gcse'); if (!tab) return;
-  var b = gEl('gcse-notify-badge');
-  if (!n) { if (b) b.remove(); return; }
-  if (!b) { b = document.createElement('span'); b.id = 'gcse-notify-badge'; b.className = 'ml-1 px-1.5 rounded-full text-[11px] bg-red-600 text-white font-bold'; tab.appendChild(b); }
-  b.textContent = n;
-}
 // Accept / reject an "I think I'm right" (or marker-unsure) answer. Rejecting a redo answer re-opens that question.
 async function gcseDecideReview(it, ok) {
   var updates = {};
@@ -519,46 +512,6 @@ async function gcseDecideReview(it, ok) {
   if (!ok && it.redo && it.redo.t) { try { await state.db.ref('progress/' + it.code + '/redo/' + it.redo.t + '/done').transaction(function (n) { return Math.max(0, (n || 0) - 1); }); } catch (e) {} }
   if (ok && it.auto < it.max) (it.topics || []).forEach(function (tc) { state.db.ref('progress/' + it.code + '/gcseQuiz/' + gTopicKey(tc) + '/correct').transaction(function (c) { return (c || 0) + 1; }, null, false); });
 }
-async function redoRenderNotifications(force) {
-  var body = gEl('gcse-body'); if (!body || !gIsStaff()) return;
-  var host = gEl('gcse-notify');
-  if (!host) { host = document.createElement('div'); host.id = 'gcse-notify'; host.className = 'mb-3'; body.insertBefore(host, body.firstChild); }
-  var N;
-  try { N = await redoLoadNotifications(force); } catch (e) { return; }
-  host = gEl('gcse-notify'); if (!host) return;
-  var items = N.items;
-  redoNotifyBadge(items.length);
-  var open = REDO.notifyOpen == null ? items.length > 0 : REDO.notifyOpen;
-  var row = function (it, i) {
-    var who = '<button type="button" class="gcse-profile-link font-semibold hover:underline" data-code="' + gEsc(it.code) + '">' + gEsc(gName(it.code) || it.code) + '</button> <span class="text-xs text-gray-500">' + gEsc(it.cls) + '</span>';
-    if (it.kind === 'needs') return '<div class="gcse-notif flex flex-wrap items-center gap-2 border-t border-gray-100 py-2 text-sm" data-kind="needs"><span class="text-lg">🚩</span><span>' + who + ' is stuck on <b>' + gEsc(redoLabel(gFromRedoKey(it.part))) + '</b> of ' + gEsc(it.title) + ' <span class="text-xs text-gray-500">(' + it.tries + ' tries)</span></span>' +
-      '<button type="button" class="redo-seen ml-auto text-xs px-2 py-1 rounded border border-gray-300" data-i="' + i + '">Seen – I\'ve helped</button></div>';
-    return '<div class="gcse-notif border-t border-gray-100 py-2 text-sm" data-kind="review"><div class="flex flex-wrap items-center gap-2"><span class="text-lg">✋</span><span>' + who + ' – ' + (it.source === 'appeal' ? 'thinks this answer is right' : 'the marker is unsure') + (it.redo ? ' <span class="text-xs text-gray-500">(redo of ' + gEsc(redoLabel(it.redo.id || '')) + ')</span>' : '') + '</span></div>' +
-      '<div class="ml-8 mt-1 text-gray-600 whitespace-pre-wrap">' + gEsc(String(it.question || '').slice(0, 400)) + '</div><div class="ml-8 mt-1 bg-gray-50 rounded p-2 whitespace-pre-wrap">' + gEsc(it.answer) + '</div>' +
-      '<div class="ml-8 mt-1 flex flex-wrap items-center gap-2"><span class="text-xs text-gray-500">Auto mark ' + it.auto + ' / ' + it.max + '</span><button type="button" class="redo-decide text-xs px-2 py-1 rounded border border-green-500 text-green-700 font-semibold" data-i="' + i + '" data-ok="1">Award full marks</button>' +
-      '<button type="button" class="redo-decide text-xs px-2 py-1 rounded border border-gray-300" data-i="' + i + '" data-ok="0">' + (it.redo ? 'Not right – they redo it' : 'Keep the auto mark') + '</button></div></div>';
-  };
-  host.innerHTML = '<details id="gcse-notify-box" class="rounded-lg border ' + (items.length ? 'border-red-300 bg-red-50/40' : 'border-gray-200') + ' px-3 py-2"' + (open ? ' open' : '') + '><summary class="cursor-pointer font-semibold text-gray-800 flex items-center gap-2">🔔 Notifications' +
-    (items.length ? '<span class="px-1.5 rounded-full text-[11px] bg-red-600 text-white font-bold">' + items.length + '</span>' : '<span class="text-xs font-normal text-gray-500">nothing needs you</span>') +
-    '<button type="button" id="gcse-notify-refresh" class="ml-auto text-xs font-normal px-2 py-0.5 rounded border border-gray-300 bg-white">Refresh</button></summary>' +
-    (items.length ? '<div class="mt-1">' + items.slice(0, 40).map(row).join('') + (items.length > 40 ? '<div class="text-xs text-gray-500 pt-2">' + (items.length - 40) + ' more – clear some to see them.</div>' : '') + '</div>'
-      : '<p class="text-sm text-gray-500 mt-1">Pupils who are stuck on a redo question, and answers pupils think were marked wrongly, appear here for every GCSE class.</p>') + '</details>';
-  gEl('gcse-notify-box').ontoggle = function () { REDO.notifyOpen = this.open; };
-  gEl('gcse-notify-refresh').onclick = function (e) { e.preventDefault(); redoRenderNotifications(true); };
-  host.querySelectorAll('.gcse-profile-link').forEach(function (b) { b.onclick = function () { openGcseProfile(b.dataset.code); }; });
-  host.querySelectorAll('.redo-seen').forEach(function (b) { b.onclick = async function () { var it = items[Number(b.dataset.i)]; b.disabled = true; try { await state.db.ref('progress/' + it.code + '/redo/' + it.testId + '/parts/' + it.part + '/seen').set(Date.now()); } catch (e) {} redoRenderNotifications(true); }; });
-  host.querySelectorAll('.redo-decide').forEach(function (b) { b.onclick = async function () { var it = items[Number(b.dataset.i)]; b.disabled = true; try { await gcseDecideReview(it, b.dataset.ok === '1'); } catch (e) { gcseStatus(gDbError(e), true); } redoRenderNotifications(true); }; });
-}
-function gFromRedoKey(k) { return String(k || ''); }
-
-if (typeof gcseRenderTestsView === 'function') {
-  var redoOrigTestsView = gcseRenderTestsView;
-  gcseRenderTestsView = async function () {
-    var r = await redoOrigTestsView.apply(this, arguments);
-    try { if (gcse.view === 'tests' && gIsStaff()) redoRenderNotifications(); } catch (e) {}
-    return r;
-  };
-}
 (function () {
   if (typeof updateAuthUI !== 'function') return;
   var orig = updateAuthUI;
@@ -567,7 +520,6 @@ if (typeof gcseRenderTestsView === 'function') {
     var b = gEl('redo-banner'); if (b) b.remove();
     REDO.notify = null; REDO._rows = null;
     if (!isAdmin && !isTeacher) setTimeout(function () { if (state.uid && !state.isTeacher && !state.isAdmin) redoStudentBanner(); }, 900);
-    else setTimeout(function () { if (gIsStaff()) redoLoadNotifications().then(function (N) { redoNotifyBadge(N.items.length); }).catch(function () {}); }, 2500);
     return r;
   };
 })();

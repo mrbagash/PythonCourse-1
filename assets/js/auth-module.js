@@ -745,14 +745,17 @@ function setupAuthUI() {
       findClassForCode(savedCode).then(function(className) {
         state.className = className;
         var firebaseUid = state.auth && state.auth.currentUser && state.auth.currentUser.uid;
+        // Pupil buttons (My checklist, My progress, Homework…) and banners need the class, which is only
+        // known now – redraw the top bar once the session is saved (the database rules read it).
+        var redraw = function () { if (state.uid === savedCode && !state.isAdmin && !state.isTeacher) updateAuthUI(n.first, n.last, false); };
         if (firebaseUid) {
           state.db.ref('studentSessions/' + firebaseUid).set({
             code: savedCode,
             codeLower: savedCode.toLowerCase(),
             className: className || '',
             loggedInAt: Date.now()
-          }).catch(function(){});
-        }
+          }).catch(function(){}).then(redraw);
+        } else redraw();
         logStudentAccess(savedCode, n.first + ' ' + n.last, className);
         startForcedQuizWatcher(className);
         startForcedAssessmentWatcher(className);
