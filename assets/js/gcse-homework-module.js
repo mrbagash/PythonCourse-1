@@ -128,63 +128,59 @@ function hwPickQuestion(list, target, used, seen, rand) {
 function hwTargetLevel(t, bump) { return hwClamp(Math.round(t - 0.8) + (bump || 0), 1, 5); }
 
 // ── Why / where feedback ────────────────────────────────────────────────────
-function hwSuspectWords(q, codes) {
-  var words = {};
-  try {
-    GcseCore.parseRules(q.rules || '').points.forEach(function (p) { (p.reject || []).forEach(function (sp) { if (sp && sp.main) words[sp.main] = true; }); });
-  } catch (e) {}
-  (codes || []).forEach(function (id) { var c = J277.feedbackCode(id); (c && c.wrong || []).forEach(function (w) { words[GcseCore.stem(w)] = true; }); });
-  return words;
-}
-function hwHighlight(text, words) {
-  var safe = gEsc(text);
-  if (!Object.keys(words).length) return safe;
-  return safe.replace(/[A-Za-z][A-Za-z0-9]{1,}/g, function (w) { return words[GcseCore.stem(w.toLowerCase())] ? '<mark class="bg-red-100 text-red-800 underline decoration-red-500 rounded px-0.5">' + w + '</mark>' : w; });
-}
 // res = { ok, mark, max, points, codes, chosen }
+// Wrong answers: what went wrong (specific), the misconception if the pupil's own words show one,
+// what was still needed (in pupil words), and the working / a full-mark answer.
+function hwMiscHtml(m) {
+  return '<div class="hw-misc rounded border border-red-200 bg-white p-2"><div><span class="font-semibold text-red-800">Misconception:</span> it looks like you think ' + gEsc(m.belief.replace(/\s*\(.*\)$/, '')) + '.</div>' +
+    (m.fix ? '<div class="mt-0.5"><span class="font-semibold text-green-800">Actually:</span> ' + gEsc(m.fix) + '</div>' : '') + '</div>';
+}
 function hwFeedbackHtml(q, answer, res) {
   if (res.ok) {
     return '<div class="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900"><b>✓ Correct!</b>' +
-      (res.points && res.points.length ? '<ul class="text-xs list-disc ml-5 mt-1">' + res.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+      (res.points && res.points.length > 1 ? '<ul class="text-xs list-disc ml-5 mt-1">' + res.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
   }
-  var codes = (res.codes || []).map(function (id) { return J277.feedbackCode(id); }).filter(Boolean);
-  // No code on the question? Use the topic's own misconception / mix-up so there is always a reason.
-  if (!codes.length) {
-    var tc = (q.topics || [])[0], sk = q.skill || '';
-    var all = J277.codesForTopic(tc).filter(function (c) { return !c.exam; });
-    var topicCodes = all.filter(function (c) { return sk ? (!c.skill || c.skill === sk) : true; });
-    if (!topicCodes.length) topicCodes = all;
-    if (topicCodes.length) codes = topicCodes.slice(0, 1);
-    else { var mix = J277.mixupsFor(tc); if (mix.length) codes = [{ id: '', text: mix[0] }]; }
-  }
-  var h = '<div class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2"><div><b>Not quite</b>' + (res.max > 1 ? ' – ' + res.mark + ' / ' + res.max : '') + '</div>';
+  var dg = typeof GcseDiagnose !== 'undefined' ? GcseDiagnose.diagnose(q, answer, res) : { lines: [], misc: [], missing: [], marks: [], working: '' };
+  var h = '<div class="hw-feedback rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2"><div><b>Not quite</b>' + (res.max > 1 ? ' – ' + res.mark + ' / ' + res.max + ' marks' : '') + '</div>';
   if (q.type === 'mcq') {
     var why = (q.why || [])[res.chosen];
     h += '<div><span class="font-semibold">You chose:</span> ' + gEsc(String.fromCharCode(65 + res.chosen) + '. ' + (q.options[res.chosen] || '')) + '</div>' +
-      '<div class="hw-why"><span class="font-semibold">Why that is wrong:</span> ' + gEsc(why || (codes[0] ? codes[0].text : 'Compare it carefully with the correct answer below.')) + '</div>' +
-      '<div><span class="font-semibold">Correct answer:</span> ' + gEsc(String.fromCharCode(65 + q.answerIndex) + '. ' + q.options[q.answerIndex]) + '</div>';
+      '<div class="hw-why"><span class="font-semibold">Why that is wrong:</span> ' + gEsc(why || 'Compare it with the correct answer below – what is different?') + '</div>';
+    dg.misc.forEach(function (m) { h += hwMiscHtml(m); });
+    h += '<div><span class="font-semibold">Correct answer:</span> ' + gEsc(String.fromCharCode(65 + q.answerIndex) + '. ' + q.options[q.answerIndex]) + '</div>';
+    if (!dg.misc.length) {
+      var key = (Array.isArray(q.codes) ? q.codes : []).map(function (id) { return J277.feedbackCode(id); }).filter(function (c) { return c && !c.exam; })[0];
+      if (key) h += '<div class="text-xs"><span class="font-semibold">Remember:</span> ' + gEsc(key.text) + '</div>';
+    }
   } else {
-    var words = hwSuspectWords(q, res.codes);
-    var numeric = /^[=\s\d|,.\-]+$/.test(String(q.rules || '').split('\n')[0]);
-    h += '<div class="hw-where"><span class="font-semibold">Where:</span> ' + (answer ? '<span class="bg-white rounded px-1">' + hwHighlight(answer, words) + '</span>' : '<i>no answer</i>') +
-      (Object.keys(words).length && answer && /<mark/.test(hwHighlight(answer, words)) ? ' <span class="text-xs">(the highlighted words are where it goes wrong)</span>' : '') + '</div>';
-    if (numeric) h += '<div><span class="font-semibold">Check:</span> you wrote <b>' + gEsc(answer || '–') + '</b>; the answer is <b>' + gEsc(String(q.markScheme || '').split(/[.(]/)[0]) + '</b>. Work through it again step by step.</div>';
-    if (res.points && res.points.length) h += '<div><span class="font-semibold">Mark points:</span><ul class="text-xs list-disc ml-5">' + res.points.map(function (p) { return '<li>' + (p.awarded ? '✓ ' : '✗ missing: ') + gEsc(p.reason) + '</li>'; }).join('') + '</ul></div>';
-    if (codes.length) h += '<div class="hw-why"><span class="font-semibold">Why:</span> ' + codes.map(function (c) { return gEsc(c.text); }).join(' · ') + '</div>';
+    h += '<div class="hw-where"><span class="font-semibold">Your answer:</span> ' + (String(answer || '').trim() ? '<span class="bg-white rounded px-1 whitespace-pre-wrap">' + GcseDiagnose.highlight(answer, dg.marks) + '</span>' : '<i>no answer</i>') + '</div>';
+    if (dg.bitsHtml) h += '<div class="text-xs">Your bits (wrong ones in red):' + dg.bitsHtml + '</div>';
+    if (dg.lines.length) h += '<div class="hw-wrong"><span class="font-semibold">What went wrong:</span><ul class="list-disc ml-5">' + dg.lines.map(function (l) { return '<li>' + gEsc(l) + '</li>'; }).join('') + '</ul></div>';
+    dg.misc.forEach(function (m) { h += hwMiscHtml(m); });
+    if (dg.missing.length) h += '<div class="hw-missing"><span class="font-semibold">' + (dg.missingAny ? 'To get the mark' + (dg.missingAny > 1 ? 's' : '') + ' you needed ' + (dg.missingAny > 1 ? 'any ' + dg.missingAny : 'one') + ' of these:' : 'What you still needed:') + '</span><ul class="list-disc ml-5">' + dg.missing.map(function (l) { return '<li>' + gEsc(l) + '</li>'; }).join('') + '</ul></div>';
+    if (dg.working) h += '<div class="hw-working rounded border border-amber-200 bg-white p-2"><div class="font-semibold">How to work it out</div><div class="mt-1">' + dg.working + '</div></div>';
+    else if (q.markScheme && !(dg.missing.length === 1 && String(q.markScheme).replace(/\s*\(\d\)/g, '').trim() === dg.missing[0])) h += '<div class="hw-model rounded border border-amber-200 bg-white p-2"><div class="font-semibold">A full-mark answer</div><div class="mt-1 whitespace-pre-wrap">' + gEsc(String(q.markScheme).replace(/\s*\(\d\)/g, '')) + '</div></div>';
   }
-  if (q.markScheme && q.type !== 'mcq') h += '<details class="text-xs"><summary class="cursor-pointer font-semibold">Mark scheme</summary><div class="whitespace-pre-wrap mt-1">' + gEsc(q.markScheme) + '</div></details>';
   h += '<div class="text-xs text-amber-800">A similar question will come back later in this homework.</div></div>';
   return h;
 }
 function hwMarkAnswer(q, answer) {
+  var res;
   if (q.type === 'mcq') {
     var chosen = Number(answer), ok = chosen === q.answerIndex;
-    var codes = ok ? [] : GcseCore.asList(q.codes).slice();
-    return { ok: ok, mark: ok ? q.marks : 0, max: q.marks, chosen: chosen, codes: codes, points: [] };
+    res = { ok: ok, mark: ok ? q.marks : 0, max: q.marks, chosen: chosen, codes: ok ? [] : GcseCore.asList(q.codes).slice(), points: [] };
+  } else {
+    var m = GcseCore.mark(q.rules, answer, q.marks);
+    var codes2 = m.marks >= m.max ? [] : GcseCore.suggestFeedbackCodes({ type: 'short', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, answer, m, J277);
+    res = { ok: m.marks >= m.max, mark: m.marks, max: m.max, points: m.points, codes: GcseCore.asList(codes2) };
   }
-  var m = GcseCore.mark(q.rules, answer, q.marks);
-  var codes2 = m.marks >= m.max ? [] : GcseCore.suggestFeedbackCodes({ type: 'short', topics: q.topics, codes: q.codes, command: q.command, marks: q.marks }, answer, m, J277);
-  return { ok: m.marks >= m.max, mark: m.marks, max: m.max, points: m.points, codes: GcseCore.asList(codes2) };
+  // Misconceptions shown by the pupil's own words go first, so the profile's needs list is precise.
+  if (!res.ok && typeof GcseDiagnose !== 'undefined') {
+    var seen = GcseDiagnose.diagnose(q, answer, res).misc.map(function (x) { return x.id; });
+    if (seen.length) res.codes = seen.concat(res.codes.filter(function (id) { return seen.indexOf(id) === -1 && /^E/.test(id); }));
+    res.misc = seen;
+  }
+  return res;
 }
 
 // ── H3 pupil ────────────────────────────────────────────────────────────────
