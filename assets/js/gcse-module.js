@@ -1407,7 +1407,7 @@ function gcseChecklistHtml(s) {
   return '<div class="gcse-checklist grid grid-cols-1 md:grid-cols-3 gap-3">' + GCSE_BANDS.map(function (B) {
     var L = s[B.k] || [];
     return '<div class="gcse-band rounded border p-3 ' + B.cls + '" data-band="' + B.k + '"><div class="font-semibold ' + B.head + '">' + B.title + ' <span class="text-xs font-normal">· ' + B.sub + '</span></div>' +
-      (L.length ? '<ul class="text-sm mt-1 space-y-0.5">' + L.map(function (p) { return '<li>' + B.icon + ' ' + gEsc(gTopicName(p.code)) + '</li>'; }).join('') + '</ul>' : '<p class="text-xs text-gray-500 mt-1">' + B.empty + '</p>') + '</div>';
+      (L.length ? '<ul class="text-sm mt-1 space-y-0.5">' + L.map(function (p) { return '<li class="flex flex-wrap items-center gap-x-2"><span>' + B.icon + ' ' + gEsc(gTopicName(p.code)) + '</span>' + (B.k !== 'secure' ? (typeof gtRevisionLinkHtml === 'function' ? gtRevisionLinkHtml(p.code, 'Revise') : '') : '') + '</li>'; }).join('') + '</ul>' : '<p class="text-xs text-gray-500 mt-1">' + B.empty + '</p>') + '</div>';
   }).join('') + '</div>';
 }
 function gcsePrintWcf(t, rows) {
@@ -1545,7 +1545,7 @@ function gcseStartPractice(pool, title) {
   var idx = 0, score = 0, max = 0;
   modal.classList.remove('hidden');
   gEl('gcse-practice-title').textContent = 'Fix my mistakes – ' + (title || '');
-  gEl('gcse-practice-close').onclick = function () { modal.classList.add('hidden'); };
+  gEl('gcse-practice-close').onclick = function () { modal.classList.add('hidden'); var back = gcse.practiceOnClose; gcse.practiceOnClose = null; if (back) back(); };
   function render() {
     var box = gEl('gcse-practice-body');
     if (idx >= qs.length) {
@@ -2560,7 +2560,7 @@ async function gcseLoadProfileData(code) {
   });
   var covered = Object.keys(settings.covered || {}).map(gFromTopicKey);
   return { code: code, className: className, isGcse: isGcse, settings: settings, target: target, access: access, history: history, quiz: prog.gcseQuiz || {},
-    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, dirt: prog.dirt || {}, mastery: prog.mastery || {}, hw: prog.hw || {}, steps: steps, ms: ms, covered: covered };
+    misconceptions: prog.gcseMisconceptions || {}, plc: prog.plc || {}, dirt: prog.dirt || {}, mastery: prog.mastery || {}, hw: prog.hw || {}, practice: prog.practice || {}, redo: prog.redo || {}, steps: steps, ms: ms, covered: covered };
 }
 
 // Topic scores from official assessments, plus (optionally) live quizzes / practice.

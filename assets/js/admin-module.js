@@ -32,6 +32,7 @@ function setAdminTab(tab) {
   var debugTab = tab === 'debug';
   var accessTab = tab === 'access';
   var gcseTab = tab === 'gcse';
+  var homeworkTab = tab === 'homework';
   var activeCls = 'admin-tab px-3 py-2 text-sm font-semibold border-b-2 border-[rgb(176,28,35)] text-[rgb(176,28,35)]';
   var idleCls = 'admin-tab px-3 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-800';
   document.getElementById('admin-classes-tab').classList.toggle('hidden', !classesTab);
@@ -44,10 +45,12 @@ function setAdminTab(tab) {
   document.getElementById('admin-access-tab').classList.toggle('hidden', !accessTab);
   var gcsePanel = document.getElementById('admin-gcse-tab');
   if (gcsePanel) gcsePanel.classList.toggle('hidden', !gcseTab);
+  var hwPanel = document.getElementById('admin-homework-tab');
+  if (hwPanel) hwPanel.classList.toggle('hidden', !homeworkTab);
   [['admin-tab-classes',classesTab],['admin-tab-quiz-results',quizResultsTab],
    ['admin-tab-ap-results',apResultsTab],['admin-tab-force-ap',forceApTab],
    ['admin-tab-classroom',classroomTab],['admin-tab-teachers',teachersTab],['admin-tab-debug',debugTab],
-   ['admin-tab-access',accessTab],['admin-tab-gcse',gcseTab]
+   ['admin-tab-access',accessTab],['admin-tab-gcse',gcseTab],['admin-tab-homework',homeworkTab]
   ].forEach(function(pair) {
     var el = document.getElementById(pair[0]);
     if (!el) return;
@@ -62,6 +65,7 @@ function setAdminTab(tab) {
   if (classroomTab) loadClassroomManagementTab();
   if (accessTab) loadAccessTab();
   if (gcseTab && typeof gcseOpenTab === 'function') gcseOpenTab();
+  if (homeworkTab && typeof hwAdminOpen === 'function') hwAdminOpen();
 }
 
 document.getElementById('admin-tab-classes').onclick = function() { setAdminTab('classes'); };
@@ -73,6 +77,7 @@ document.getElementById('admin-tab-teachers').onclick = function() { setAdminTab
 document.getElementById('admin-tab-debug').onclick = function() { setAdminTab('debug'); };
 document.getElementById('admin-tab-access').onclick = function() { setAdminTab('access'); };
 document.getElementById('admin-tab-gcse').onclick = function() { setAdminTab('gcse'); };
+document.getElementById('admin-tab-homework').onclick = function() { setAdminTab('homework'); };
 document.getElementById('btn-classroom-sync-names').onclick = function() {
   startClassroomNameSync({ silent: false, force: true, showStatus: true });
 };
@@ -257,7 +262,7 @@ function applyAdminPermissions() {
   if (state.isAdmin) {
     // Full admin — restore everything
     ['admin-tab-classes','admin-tab-quiz-results','admin-tab-ap-results','admin-tab-force-ap',
-     'admin-tab-gcse','admin-tab-classroom','admin-tab-access','admin-tab-teachers','admin-tab-debug',
+     'admin-tab-gcse','admin-tab-homework','admin-tab-classroom','admin-tab-access','admin-tab-teachers','admin-tab-debug',
      'admin-gen-row','admin-add-row'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.classList.remove('hidden');
@@ -273,6 +278,7 @@ function applyAdminPermissions() {
     'admin-tab-ap-results':   canDo('viewAP'),
     'admin-tab-force-ap':     canDo('forceAP'),
     'admin-tab-gcse':         canDo('viewAP'),
+    'admin-tab-homework':     canDo('viewAP'),
     'admin-tab-classroom':    canDo('manageClasses'),
     'admin-tab-access':       canDo('viewProgress') || canDo('viewClasses'),
     'admin-tab-teachers':     canDo('manageTeachers'),

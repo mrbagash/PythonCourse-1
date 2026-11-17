@@ -17,10 +17,12 @@
     var tab = gcse.profileTab || 'overview';
     if (tab === 'feedback') body.innerHTML = gpFeedbackTabHtml(D);
     else if (tab === 'homework') body.innerHTML = '<div id="hw-prof"><p class="text-gray-400 text-sm">Loading homework…</p></div>';
+    else if (tab === 'practice') body.innerHTML = typeof xpHistoryHtml === 'function' ? xpHistoryHtml(D.practice, 'teacher') : '';
     else orig.apply(this, arguments);
     var nDirt = gpDirtItems(D).length;
     var tabList = [['overview', 'Overview'], ['feedback', 'Feedback' + (nDirt ? ' (' + nDirt + ')' : '')]];
     if (typeof hwProfileRender === 'function' && D.isGcse) tabList.push(['homework', 'Homework']);
+    if (typeof xpHistoryHtml === 'function' && D.isGcse) { var nXp = typeof xpSessions === 'function' ? xpSessions(D.practice).length : 0; tabList.push(['practice', 'Practice' + (nXp ? ' (' + nXp + ')' : '')]); }
     body.insertAdjacentHTML('afterbegin', '<div class="flex gap-1 border-b border-gray-200 mb-3">' + tabList.map(function (t) {
       var on = t[0] === tab;
       return '<button type="button" class="gp-tab px-3 py-1.5 text-sm font-semibold border-b-2 ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)]' : 'border-transparent text-gray-500') + '" data-tab="' + t[0] + '">' + t[1] + '</button>';
@@ -88,11 +90,15 @@ async function gpOpenMyProgress() {
     state.db.ref('progress/' + state.uid + '/dirt').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
     state.db.ref('progress/' + state.uid + '/hw').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
     state.db.ref('progress/' + state.uid + '/mastery').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
-    state.db.ref('classes/' + state.className + '/homework').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
+    state.db.ref('classes/' + state.className + '/homework').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('progress/' + state.uid + '/practice').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })
   ]);
-  body.innerHTML = (typeof hwMyProgressHtml === 'function' ? hwMyProgressHtml(data[4], data[5], data[6]) : '') + gpMyProgressHtml(data[0], data[1], data[2], data[3]);
+  var tab = gpOpenMyProgress.tab || 'overview';
+  var tabs = '<div class="flex gap-1 border-b border-gray-200 mb-3">' + [['overview', 'Overview'], ['practice', 'Practice']].map(function (t) { var on = t[0] === tab; return '<button type="button" class="gp-my-tab px-3 py-1.5 text-sm font-semibold border-b-2 ' + (on ? 'border-[rgb(176,28,35)] text-[rgb(176,28,35)]' : 'border-transparent text-gray-500') + '" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
+  body.innerHTML = tabs + (tab === 'practice' ? (typeof xpHistoryHtml === 'function' ? xpHistoryHtml(data[7], 'pupil') : '') : (typeof hwMyProgressHtml === 'function' ? hwMyProgressHtml(data[4], data[5], data[6]) : '') + gpMyProgressHtml(data[0], data[1], data[2], {}));
+  body.querySelectorAll('.gp-my-tab').forEach(function (b) { b.onclick = function () { gpOpenMyProgress.tab = b.dataset.tab; gpOpenMyProgress(); }; });
   var tb = gEl('my-progress-tasks'); if (tb) tb.onclick = function () { m.classList.add('hidden'); wcfOpenTasks(); };
-  var pb = gEl('my-progress-plc'); if (pb) pb.onclick = function () { m.classList.add('hidden'); plcOpen(); };
+  var pb = gEl('my-progress-plc'); if (pb) pb.onclick = function () { m.classList.add('hidden'); plcOpen(); var pm = gEl('modal-plc'); if (pm && gEl('plc-close')) { var c0 = gEl('plc-close').onclick; gEl('plc-close').onclick = function () { if (c0) c0(); m.classList.remove('hidden'); }; } };
 }
 // Released results only: paper tests after release; APs once their feedback is released.
 function gpReleasedHistory(assessments, feedbacks) {
@@ -135,8 +141,8 @@ function gpMyProgressHtml(assessments, feedbacks, targetRec, dirt) {
   var tl = Object.keys(scores).filter(function (k) { return scores[k].pct != null; }).map(function (k) { return { code: k, pct: scores[k].pct }; });
   if (tl.length) {
     var best = tl.slice().sort(function (a, b) { return b.pct - a.pct; }).slice(0, 3), worst = tl.slice().sort(function (a, b) { return a.pct - b.pct; }).filter(function (x) { return x.pct < 70; }).slice(0, 3);
-    h += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"><div class="rounded border border-green-200 bg-green-50 p-3"><div class="font-semibold text-green-800 mb-1">Strongest topics</div><ul class="text-sm list-disc ml-5">' + best.map(function (x) { return '<li>' + gEsc(J277.label(x.code)) + ' (' + x.pct + '%)</li>'; }).join('') + '</ul></div>' +
-      '<div class="rounded border border-amber-200 bg-amber-50 p-3"><div class="font-semibold text-amber-800 mb-1">Work on these</div><ul class="text-sm list-disc ml-5">' + (worst.length ? worst.map(function (x) { return '<li>' + gEsc(J277.label(x.code)) + ' (' + x.pct + '%)</li>'; }).join('') : '<li>Nothing under 70% – great work!</li>') + '</ul></div></div>';
+    h += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"><div class="rounded border border-green-200 bg-green-50 p-3"><div class="font-semibold text-green-800 mb-1">Strongest topics</div><ul class="text-sm list-disc ml-5">' + best.map(function (x) { return '<li>' + gEsc(gTopicName(x.code)) + ' (' + x.pct + '%)</li>'; }).join('') + '</ul></div>' +
+      '<div class="rounded border border-amber-200 bg-amber-50 p-3"><div class="font-semibold text-amber-800 mb-1">Work on these</div><ul class="text-sm list-disc ml-5">' + (worst.length ? worst.map(function (x) { return '<li>' + gEsc(gTopicName(x.code)) + ' (' + x.pct + '%)</li>'; }).join('') : '<li>Nothing under 70% – great work!</li>') + '</ul></div></div>';
   }
   h += '<div class="border border-gray-200 rounded-lg p-3 mb-3"><h4 class="font-bold mb-2">My results</h4><table class="w-full text-sm"><tr class="text-xs text-gray-500 text-left"><th class="p-1">Date</th><th class="p-1">Assessment</th><th class="p-1 text-center">Score</th><th class="p-1 text-center">Grade</th></tr>' +
     hist.slice().reverse().map(function (x) {

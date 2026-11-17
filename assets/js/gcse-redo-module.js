@@ -252,7 +252,7 @@ function redoNext() {
 }
 function redoHelpHtml(part) {
   return '<div class="redo-help mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950"><b>Stuck?</b> Revise this topic first, then try again. Your teacher has been told you need help with this one.' +
-    '<div class="mt-2"><a class="inline-block px-3 py-1.5 rounded-lg bg-white border border-blue-300 font-semibold text-blue-800" target="_blank" rel="noopener" href="' + redoLink(part.topics[0]) + '">📘 Revise ' + gEsc(gTopicName(part.topics[0] || '')) + ' on Teach-ICT</a></div>' +
+    (typeof gtRevisionLink !== 'function' || gtRevisionLink(part.topics[0]) ? '<div class="mt-2"><a class="inline-block px-3 py-1.5 rounded-lg bg-white border border-blue-300 font-semibold text-blue-800" target="_blank" rel="noopener" href="' + gEsc(typeof gtRevisionLink === 'function' ? gtRevisionLink(part.topics[0]) : redoLink(part.topics[0])) + '">📘 Revise ' + gEsc(gTopicName(part.topics[0] || '')) + (typeof gtRevisionLink === 'function' && !/teach-ict/.test(gtRevisionLink(part.topics[0])) ? '' : ' on Teach-ICT') + '</a></div>' : '') +
     (part.model ? '<details class="mt-2"><summary class="cursor-pointer font-semibold">Model answer to the question on your test</summary><div class="mt-1 whitespace-pre-wrap bg-white rounded p-2 border border-blue-100">' + gEsc(part.model) + '</div></details>' : '') + '</div>';
 }
 // Save one part's progress (and the done count the teacher's tracker reads).
@@ -293,7 +293,7 @@ async function redoSubmit(answer) {
   redoSave(part, { ok: false, tries: tries, used: used, stuck: stuck ? true : (d.stuck || null), seen: stuck ? (d.seen || null) : null });
   var canAppeal = q.type === 'short';
   box.innerHTML = fb + '<div class="mt-2 text-sm font-semibold text-gray-800">' + res.mark + ' / ' + res.max + ' – you need full marks to pass. Read what was missing, then try a different version.</div>' +
-    (stuck ? redoHelpHtml(part) : '') +
+    (stuck ? redoHelpHtml(part) : (typeof gtRevisionLinkHtml === 'function' && gtRevisionLink(part.topics[0]) ? '<div class="mt-2">' + gtRevisionLinkHtml(part.topics[0]) + '</div>' : '')) +
     '<div class="xp-actions"><button type="button" id="redo-again" class="xp-check">Try a different version →</button>' +
     (canAppeal ? '<button type="button" id="redo-appeal" class="xp-tool" style="border-color:#93c5fd;color:#1e40af">I think I\'m right – ask my teacher</button>' : '') +
     '<button type="button" id="redo-skip" class="xp-tool">Do another question first</button></div>';

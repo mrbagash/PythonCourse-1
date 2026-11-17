@@ -67,6 +67,10 @@ function hwUpdateMastery(m, level, correct, now) {
 // ── H2 generator ────────────────────────────────────────────────────────────
 // ctx = { bank, mastery, covered[], grade, topicPct, misc{codeId}, plc{key}, pins[], excludes[], recent[] }
 function hwEligibleKeys(ctx) {
+  if (ctx.only && ctx.only.length) {
+    var onlySet = {}; ctx.only.forEach(function (c) { J277.expand(c).forEach(function (s) { onlySet[s] = true; }); });
+    return Object.keys(ctx.bank).filter(function (k) { return onlySet[hwKeyParts(k).topic]; });
+  }
   var taught = {};
   (ctx.covered || []).forEach(function (c) { J277.expand(c).forEach(function (s) { taught[s] = true; }); });
   var anyTaught = Object.keys(taught).length > 0;
@@ -106,9 +110,14 @@ function hwBuildPlan(ctx, size, rand) {
     for (var i = 0; i < n; i++) out.push(pool[i % pool.length]);
     return n;
   };
-  take(weak, nW, true);
-  if (due.length) take(due, nD); else take(weak.slice(5).length ? weak.slice(5) : weak, nD);
-  if (recent.length) take(recent.sort(function () { return rand() - 0.5; }), nR); else take(keys.slice().sort(function () { return rand() - 0.5; }), nR);
+  if (ctx.only && ctx.only.length) {
+    // These topics only: every ticked skill gets questions, weakest first, then round again.
+    for (var oi = 0; oi < size; oi++) out.push(weak[oi % weak.length]);
+  } else {
+    take(weak, nW, true);
+    if (due.length) take(due, nD); else take(weak.slice(5).length ? weak.slice(5) : weak, nD);
+    if (recent.length) take(recent.sort(function () { return rand() - 0.5; }), nR); else take(keys.slice().sort(function () { return rand() - 0.5; }), nR);
+  }
   // Interleave: avoid the same key twice in a row where possible.
   var shuffled = out.sort(function () { return rand() - 0.5; });
   for (var i = 1; i < shuffled.length; i++) {
@@ -533,7 +542,7 @@ function hwModal() {
     document.body.appendChild(m);
   }
   m.classList.remove('hidden');
-  gEl('hw-close').onclick = function () { hwStopTracking(); m.classList.add('hidden'); hwStudentBanner(); };
+  gEl('hw-close').onclick = function () { hwStopTracking(); m.classList.add('hidden'); hwStudentBanner(); hwPupilBadge(); var back = HW.onClose; HW.onClose = null; if (back) back(); };
   return gEl('hw-body');
 }
 async function hwOpen(hwId) {
@@ -542,7 +551,7 @@ async function hwOpen(hwId) {
   var ctx = await hwStudentContext();
   var meta = ctx.homework[hwId]; if (!meta) { body.innerHTML = '<p class="text-sm text-gray-500">This homework is no longer set.</p>'; return; }
   var bank = hwBankByKey();
-  ctx.bank = bank; ctx.pins = GcseCore.asList(meta.pins); ctx.excludes = GcseCore.asList(meta.excludes);
+  ctx.bank = bank; ctx.pins = GcseCore.asList(meta.pins); ctx.excludes = GcseCore.asList(meta.excludes); ctx.only = meta.mode === 'only' ? GcseCore.asList(meta.topics) : null;
   var rec = ctx.hw[hwId];
   var ref = state.db.ref('progress/' + state.uid + '/hw/' + hwId);
   if (!rec || !rec.queue) {
@@ -711,7 +720,7 @@ async function hwSubmit(answer) {
   if (gEl('hw-hint')) gEl('hw-hint').disabled = true;
   if (gEl('hw-submit')) gEl('hw-submit').textContent = 'Checked';
   if (gEl('hw-try')) gEl('hw-try').disabled = true;
-  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<div class="xp-actions"><button type="button" id="hw-next" class="xp-next">Next question →</button></div>';
+  gEl('hw-result').innerHTML = hwFeedbackHtml(q, q.type === 'mcq' ? '' : answer, res) + (!res.ok ? '<div class="mt-2">' + (typeof gtRevisionLinkHtml === 'function' ? gtRevisionLinkHtml((q.topics || [])[0]) : '') + '</div>' : '') + (res.ok && helped ? '<div class="text-xs text-blue-800 mt-1">You used ' + help.shown + ' hint' + (help.shown === 1 ? '' : 's') + ' – next time try with one fewer.</div>' : '') + '<div class="xp-actions"><button type="button" id="hw-next" class="xp-next">Next question →</button></div>';
   hwProgressBar();
   gEl('hw-next').onclick = hwNext;
 }
@@ -764,8 +773,11 @@ function hwLogEvent(type, extra, T) {
 async function hwSetHomework(className, opts) {
   var now = Date.now();
   var id = 'hw' + now.toString(36);
-  var rec = { title: opts.title || ('Homework – week of ' + new Date(now).toLocaleDateString('en-GB')), setAt: now, dueAt: opts.dueAt || now + HW.dueDays * 864e5,
-    size: opts.size || HW.size, pins: opts.pins && opts.pins.length ? opts.pins : null, excludes: opts.excludes && opts.excludes.length ? opts.excludes : null, auto: !!opts.auto };
+  var mode = opts.mode === 'only' ? 'only' : 'adaptive';
+  var topics = opts.topics && opts.topics.length ? opts.topics : null;
+  var title = opts.title || (mode === 'only' && topics ? gtSummary(topics, 2) : 'Homework – week of ' + new Date(now).toLocaleDateString('en-GB'));
+  var rec = { title: title, setAt: now, dueAt: opts.dueAt || now + HW.dueDays * 864e5, size: opts.size || HW.size, mode: mode, topics: topics,
+    pins: mode === 'adaptive' && topics ? topics : (opts.pins && opts.pins.length ? opts.pins : null), excludes: opts.excludes && opts.excludes.length ? opts.excludes : null, auto: !!opts.auto };
   await state.db.ref('classes/' + className + '/homework/' + id).set(rec);
   return id;
 }
@@ -817,65 +829,251 @@ function hwPupilRow(H, id, code) {
     acc: first.length ? Math.round(first.filter(function (a) { return a.ok; }).length / first.length * 100) : null, mins: rec ? Math.round((rec.ms || 0) / 60000) : 0, log: log,
     helped: first.filter(function (a) { return a.h; }).length, answered: first.length, support: Number((H.support || {})[code]) || 0 };
 }
+function hwModeChip(meta) {
+  return meta.mode === 'only' ? '<span class="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-semibold">These topics only</span>' : '<span class="text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-semibold">Adaptive</span>';
+}
 async function hwClassTabRender(body, className, settings) {
   body.innerHTML = '<p class="text-gray-400 text-sm">Loading homework…</p>';
   var H = await hwLoadClass(className);
   HW.classData = H;
-  if (!gEl('class-page-body') || classPage.tab !== 'homework') return;
-  var auto = (await state.db.ref('classes/' + className + '/homeworkAuto').get()).val() || {};
+  if (!body.isConnected) return;
+  var extra = await Promise.all([state.db.ref('classes/' + className + '/homeworkAuto').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; }),
+    state.db.ref('classes/' + className + '/settings/covered').get().then(function (s) { return s.val() || {}; }).catch(function () { return {}; })]);
+  if (!body.isConnected) return;
+  var auto = extra[0], covered = {};
+  Object.keys(extra[1]).forEach(function (k) { J277.expand(gFromTopicKey(k)).forEach(function (s) { covered[s] = true; }); });
+  var bankTopics = {}; Object.keys(hwBankByKey()).forEach(function (k) { bankTopics[hwKeyParts(k).topic] = true; });
   var ids = Object.keys(H.homework).sort(function (a, b) { return H.homework[b].setAt - H.homework[a].setAt; });
   var due = new Date(Date.now() + HW.dueDays * 864e5).toISOString().slice(0, 10);
-  var h = '<div class="border border-gray-200 rounded-lg p-3 mb-4"><h4 class="font-bold text-gray-800 mb-2">Set homework <span class="text-xs font-normal text-gray-500">– every pupil gets their own questions, weakest skills first</span></h4>' +
-    '<div class="flex flex-wrap items-end gap-3 text-sm"><label class="text-xs text-gray-600">Due<input type="date" id="hw-due" value="' + due + '" class="block border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
+  var mode = HW.formMode || 'adaptive';
+  var modeCard = function (k, title, sub) { var on = mode === k; return '<button type="button" class="hw-mode text-left rounded-xl border-2 px-3 py-2 ' + (on ? 'border-[rgb(176,28,35)] bg-red-50' : 'border-gray-200 bg-white') + '" data-mode="' + k + '" role="radio" aria-checked="' + on + '"><div class="font-bold text-gray-900">' + title + '</div><div class="text-xs text-gray-600">' + sub + '</div></button>'; };
+  var h = '<div class="hw-setcard border border-gray-200 rounded-xl p-4 mb-4 bg-white"><h4 class="font-bold text-gray-900 mb-2">Set homework</h4>' +
+    '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3" role="radiogroup" aria-label="Homework mode">' +
+      modeCard('adaptive', 'Adaptive (like Sparx)', 'Each pupil gets their weakest taught topics plus older topics for review, at their level. Ticked topics get extra weight.') +
+      modeCard('only', 'These topics only', 'Every question comes from the topics you tick, still at each pupil\'s level.') + '</div>' +
+    '<div class="text-xs font-semibold text-gray-600 mb-1" id="hw-topic-label">' + (mode === 'only' ? 'Topics (pick at least one)' : 'Focus on these topics (optional)') + '</div>' +
+    '<div class="max-h-80 overflow-y-auto pr-1">' + gtPickerHtml('hw-tree', { allowed: function (s) { return !!bankTopics[s]; }, selected: HW.formTopics || [], badge: function (s) { return covered[s] ? '<span class="ml-auto text-[10px] px-1.5 rounded bg-green-50 text-green-700">taught</span>' : ''; } }) + '</div>' +
+    '<div class="flex flex-wrap items-end gap-3 text-sm mt-3"><label class="text-xs text-gray-600">Due<input type="date" id="hw-due" value="' + due + '" class="block border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
     '<label class="text-xs text-gray-600">Questions<input type="number" id="hw-size" min="5" max="40" value="' + HW.size + '" class="block w-20 border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
-    '<label class="text-xs text-gray-600">Focus on (optional)<input id="hw-pins" placeholder="e.g. 2.2.1d, 1.2.4" class="block w-44 border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
-    '<label class="text-xs text-gray-600">Leave out (optional)<input id="hw-excl" placeholder="e.g. 1.6" class="block w-36 border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
-    '<button type="button" id="hw-set" class="jhncc-primary px-4 py-1.5 rounded font-semibold">Set homework</button>' +
-    '<label class="text-xs flex items-center gap-1 ml-auto"><input type="checkbox" id="hw-auto"' + (auto.on ? ' checked' : '') + '> Auto-set weekly</label><span id="hw-msg" class="text-xs text-gray-600">' + (H.created ? 'This week\'s homework was set automatically.' : '') + '</span></div></div>';
+    '<label class="text-xs text-gray-600 flex-1 min-w-[10rem]">Title (optional)<input id="hw-title" placeholder="e.g. Loops practice" class="block w-full border border-gray-300 rounded px-2 py-1 text-sm"></label>' +
+    '<button type="button" id="hw-set" class="jhncc-primary px-5 py-2 rounded-lg font-bold">Set homework</button></div>' +
+    '<div class="flex flex-wrap items-center gap-3 mt-2"><label class="text-xs flex items-center gap-1"><input type="checkbox" id="hw-auto"' + (auto.on ? ' checked' : '') + '> Auto-set an adaptive homework every week</label><span id="hw-msg" class="text-xs text-gray-600">' + (H.created ? 'This week\'s homework was set automatically.' : '') + '</span></div></div>';
   h += hwSupportCardHtml(H);
+  h += '<h4 class="font-bold text-gray-900 mb-2">Set homework <span class="text-xs font-normal text-gray-500">' + ids.length + '</span></h4>';
   if (!ids.length) h += '<p class="text-sm text-gray-500 mb-4">No homework set yet.</p>';
   ids.forEach(function (id, i) {
     var meta = H.homework[id];
     var rows = H.codes.map(function (c) { return hwPupilRow(H, id, c); }).sort(function (a, b) { return a.name.localeCompare(b.name); });
     var done = rows.filter(function (r) { return r.status === 'done' || r.status === 'late'; }).length;
+    var started = rows.filter(function (r) { return r.status === 'partial'; }).length;
     var overdue = meta.dueAt < Date.now();
     var chase = rows.filter(function (r) { return r.status === 'not started' || r.status === 'partial'; });
-    h += '<details class="hw-item border border-gray-200 rounded-lg mb-3"' + (i === 0 ? ' open' : '') + '><summary class="cursor-pointer px-3 py-2 flex flex-wrap items-center gap-2 text-sm"><b>' + gEsc(meta.title) + '</b><span class="text-xs text-gray-500">due ' + gEsc(hwFmtDate(meta.dueAt)) + ' · ' + (meta.size || HW.size) + ' questions' + (meta.pins ? ' · focus ' + gEsc(GcseCore.asList(meta.pins).join(', ')) : '') + '</span>' +
-      '<span class="ml-auto text-xs ' + (done === rows.length ? 'text-green-700' : overdue ? 'text-red-700' : 'text-gray-600') + '">' + done + '/' + rows.length + ' done</span></summary><div class="px-3 pb-3">' +
+    var topics = GcseCore.asList(meta.topics);
+    h += '<details class="hw-item border border-gray-200 rounded-xl mb-3 bg-white" data-id="' + gEsc(id) + '"' + (i === 0 ? ' open' : '') + '><summary class="cursor-pointer px-3 py-2.5 flex flex-wrap items-center gap-2 text-sm"><b>' + gEsc(meta.title) + '</b>' + hwModeChip(meta) +
+      '<span class="text-xs text-gray-500">due ' + gEsc(hwFmtDate(meta.dueAt)) + ' · ' + (meta.size || HW.size) + ' questions</span>' +
+      '<span class="ml-auto text-xs ' + (done === rows.length ? 'text-green-700' : overdue ? 'text-red-700' : 'text-gray-600') + '">' + done + ' done · ' + started + ' started · ' + (rows.length - done - started) + ' not started</span></summary><div class="px-3 pb-3">' +
+      (topics.length ? '<div class="text-xs text-gray-600 mb-2"><b>Topics:</b> ' + gEsc(gtSummary(topics, 6)) + '</div>' : '') +
+      '<div class="flex flex-wrap items-center gap-2 mb-2"><button type="button" class="hw-edit text-xs px-2.5 py-1 rounded border border-gray-300" data-id="' + gEsc(id) + '">Edit</button><button type="button" class="hw-remove text-xs px-2.5 py-1 rounded border border-red-300 text-red-700" data-id="' + gEsc(id) + '">Remove</button>' +
+      '<span class="hw-edit-form hidden flex flex-wrap items-center gap-2 text-xs"><label>Due <input type="date" class="hw-edit-due border border-gray-300 rounded px-1 py-0.5" value="' + new Date(meta.dueAt).toISOString().slice(0, 10) + '"></label><label>Questions <input type="number" min="5" max="40" class="hw-edit-size w-16 border border-gray-300 rounded px-1 py-0.5" value="' + (meta.size || HW.size) + '"></label><button type="button" class="hw-edit-save px-2 py-1 rounded jhncc-primary font-semibold" data-id="' + gEsc(id) + '">Save</button><span class="text-gray-500">New size applies to pupils who have not started.</span></span></div>' +
       (overdue && chase.length ? '<div class="text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2"><b>Chase (' + chase.length + '):</b> ' + chase.map(function (r) { return gEsc(r.name) + (r.status === 'partial' ? ' (' + r.cleared + '/' + r.size + ')' : ''); }).join(', ') + '</div>' : '') +
-      '<div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50 text-left"><th class="p-1">Pupil</th><th class="p-1">Status</th><th class="p-1 text-center">Progress</th><th class="p-1 text-center">Right first time</th><th class="p-1 text-center">Minutes</th><th class="p-1 text-center">Help used</th><th class="p-1">Activity (only you can see this)</th></tr>' +
+      '<div class="overflow-x-auto"><table class="w-full text-xs"><tr class="bg-gray-50 text-left"><th class="p-1">Pupil</th><th class="p-1">Status</th><th class="p-1 text-center">Progress</th><th class="p-1 text-center">Right first time</th><th class="p-1 text-center">Minutes</th><th class="p-1 text-center">Help used</th><th class="p-1">Activity</th></tr>' +
       rows.map(function (r) {
         var st = { done: 'text-green-700', late: 'text-amber-700', partial: 'text-blue-700', 'not started': 'text-gray-500' }[r.status];
         return '<tr class="hw-row border-t" data-code="' + gEsc(r.code) + '"><td class="p-1"><button type="button" class="gcse-profile-link hover:underline" data-code="' + gEsc(r.code) + '">' + gEsc(r.name) + '</button></td><td class="p-1 ' + st + '">' + r.status + '</td>' +
-          '<td class="p-1 text-center">' + r.cleared + '/' + r.size + '</td><td class="p-1 text-center">' + (r.acc == null ? '–' : r.acc + '%') + '</td><td class="p-1 text-center">' + r.mins + '</td><td class="p-1 text-center hw-helped">' + (r.answered ? r.helped + '/' + r.answered : '–') + (r.support ? ' <span class="text-blue-700" title="Support level">(' + HW_SUPPORT[r.support].label.toLowerCase() + ')</span>' : '') + '</td>' +
+          '<td class="p-1 text-center">' + r.cleared + '/' + r.size + '</td><td class="p-1 text-center">' + (r.acc == null ? '–' : r.acc + '%') + '</td><td class="p-1 text-center">' + r.mins + '</td><td class="p-1 text-center hw-helped">' + (r.answered ? r.helped + '/' + r.answered : '–') + (r.support ? ' <span class="text-blue-700">(' + gEsc(HW_SUPPORT[r.support].label.toLowerCase()) + ')</span>' : '') + '</td>' +
           '<td class="p-1 hw-activity ' + (r.log.count ? 'text-red-800' : 'text-gray-400') + '">' + (r.log.count ? gEsc(r.log.text) : 'nothing unusual') + '</td></tr>';
       }).join('') + '</table></div><p class="text-[11px] text-gray-500 mt-1">Activity is logged silently during homework only. Treat it as something to look into, not proof – answers flagged here do not count towards mastery.</p></div></details>';
   });
   h += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="border border-gray-200 rounded-lg p-3">' + hwClassNeedsHtml(H) + '</div><div class="border border-gray-200 rounded-lg p-3" id="hw-class-impact"><p class="text-xs text-gray-400">Working out whether homework is helping…</p></div></div>';
+  h += '<div id="hw-links-card" class="mt-4"></div>';
   body.innerHTML = h;
-  body.querySelectorAll('.gcse-profile-link').forEach(function (b) { b.onclick = function () { openGcseProfile(b.dataset.code); }; });
+  hwLinksCard(className);
   var rerender = function () { hwClassTabRender(body, className, settings); };
+  gtBindPicker('hw-tree', function (picked) { HW.formTopics = picked; });
+  body.querySelectorAll('.hw-mode').forEach(function (b) { b.onclick = function () { HW.formMode = b.dataset.mode; HW.formTopics = gtPicked('hw-tree'); rerender(); }; });
+  body.querySelectorAll('.gcse-profile-link').forEach(function (b) { b.onclick = function () { openGcseProfile(b.dataset.code); }; });
   body.querySelectorAll('.hw-sup-sel').forEach(function (sel) { sel.onchange = async function () { try { await hwSetSupport(className, sel.dataset.code, sel.value); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); } }; });
   body.querySelectorAll('.hw-sup-use').forEach(function (b) { b.onclick = async function () { try { await hwSetSupport(className, b.dataset.code, b.dataset.level); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); } }; });
   if (gEl('hw-support-all')) gEl('hw-support-all').onclick = async function () {
     var btns = Array.prototype.slice.call(body.querySelectorAll('.hw-sup-use'));
     try { await Promise.all(btns.map(function (b) { return hwSetSupport(className, b.dataset.code, b.dataset.level); })); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); }
   };
-  var parseCodes = function (v) { return String(v || '').split(/[,\s]+/).map(function (x) { return x.trim(); }).filter(function (x) { return x && J277.get(x); }); };
   gEl('hw-set').onclick = async function () {
+    var picked = gtPicked('hw-tree');
+    if (mode === 'only' && !picked.length) { gEl('hw-msg').textContent = 'Tick at least one topic for "These topics only".'; gEl('hw-msg').className = 'text-xs text-red-700'; return; }
     var dueAt = new Date(gEl('hw-due').value + 'T21:00:00').getTime() || Date.now() + HW.dueDays * 864e5;
+    this.disabled = true;
     try {
-      await hwSetHomework(className, { dueAt: dueAt, size: Number(gEl('hw-size').value) || HW.size, pins: parseCodes(gEl('hw-pins').value), excludes: parseCodes(gEl('hw-excl').value) });
-      hwClassTabRender(body, className, settings);
-    } catch (e) { gEl('hw-msg').textContent = gDbError(e); }
+      await hwSetHomework(className, { mode: mode, topics: picked.length ? gtCompress(picked) : null, dueAt: dueAt, size: Number(gEl('hw-size').value) || HW.size, title: gEl('hw-title').value.trim() });
+      HW.formTopics = []; rerender();
+    } catch (e) { this.disabled = false; gEl('hw-msg').textContent = gDbError(e); }
   };
+  body.querySelectorAll('.hw-edit').forEach(function (b) { b.onclick = function () { b.parentNode.querySelector('.hw-edit-form').classList.toggle('hidden'); }; });
+  body.querySelectorAll('.hw-edit-save').forEach(function (b) {
+    b.onclick = async function () {
+      var row = b.closest('.hw-edit-form');
+      var dueAt = new Date(row.querySelector('.hw-edit-due').value + 'T21:00:00').getTime();
+      var size = Math.max(5, Math.min(40, Number(row.querySelector('.hw-edit-size').value) || HW.size));
+      var upd = { size: size }; if (dueAt) upd.dueAt = dueAt;
+      try { await state.db.ref('classes/' + className + '/homework/' + b.dataset.id).update(upd); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); }
+    };
+  });
+  body.querySelectorAll('.hw-remove').forEach(function (b) {
+    b.onclick = async function () {
+      var meta = H.homework[b.dataset.id];
+      if (!confirm('Remove "' + meta.title + '"?\n\nPupils will no longer see it. Answers already given stay on their profiles.')) return;
+      try { await state.db.ref('classes/' + className + '/homework/' + b.dataset.id).remove(); rerender(); } catch (e) { gEl('hw-msg').textContent = gDbError(e); }
+    };
+  });
   gEl('hw-auto').onchange = async function () {
     await state.db.ref('classes/' + className + '/homeworkAuto').set(this.checked ? { on: true, size: Number(gEl('hw-size').value) || HW.size, setAt: Date.now() } : null);
-    gEl('hw-msg').textContent = this.checked ? 'Auto-weekly on: a new homework is set when 7 days have passed (checked whenever a teacher opens this tab).' : 'Auto-weekly off.';
+    gEl('hw-msg').textContent = this.checked ? 'Auto-weekly on: a new adaptive homework is set when 7 days have passed (checked whenever a teacher opens this tab).' : 'Auto-weekly off.';
   };
   hwClassImpactRender(className, H);
 }
 
+// Revision links pupils see on weak topics (Teach-ICT by default): off, or your own link per topic.
+async function hwLinksCard(className) {
+  var box = gEl('hw-links-card'); if (!box) return;
+  var L = (await state.db.ref('classes/' + className + '/settings/links').get().catch(function () { return null; }));
+  L = (L && L.val && L.val()) || {};
+  var own = Object.keys(L.map || {}).map(function (k) { return gFromTopicKey(k) + ' = ' + L.map[k]; }).join('\n');
+  box.innerHTML = '<details class="border border-gray-200 rounded-lg bg-white"' + (HW.linksOpen ? ' open' : '') + '><summary class="cursor-pointer px-3 py-2 text-sm"><b>Revision links</b> <span class="text-xs text-gray-500">– ' + (L.off ? 'off' : 'pupils see "📘 Revise on Teach-ICT" on weak topics') + '</span></summary><div class="px-3 pb-3 text-sm space-y-2">' +
+    '<label class="flex items-center gap-2"><input type="checkbox" id="hw-links-on"' + (L.off ? '' : ' checked') + '> Show revision links to pupils (checklist, homework, practice, AP Feedback, redo)</label>' +
+    '<div><div class="text-xs text-gray-600 mb-1">Your own links instead of Teach-ICT (optional), one per line: <code>topic = link</code>, e.g. <code>1.1.1e = https://…/registers</code> or a whole spec point <code>2.2.1 = https://…</code></div>' +
+    '<textarea id="hw-links-map" rows="3" class="w-full border border-gray-300 rounded px-2 py-1 text-xs font-mono" placeholder="1.1.1e = https://...">' + gEsc(own) + '</textarea></div>' +
+    '<div class="flex items-center gap-2"><button type="button" id="hw-links-save" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-semibold">Save links</button><span id="hw-links-msg" class="text-xs text-gray-600"></span></div></div></details>';
+  box.querySelector('details').ontoggle = function () { HW.linksOpen = this.open; };
+  gEl('hw-links-save').onclick = async function () {
+    var map = {}, bad = [];
+    gEl('hw-links-map').value.split('\n').forEach(function (line) {
+      if (!line.trim()) return;
+      var m = line.match(/^\s*([0-9.a-z]+)\s*=\s*(https?:\/\/\S+)\s*$/i);
+      if (!m || !J277.get(m[1])) { bad.push(line.trim()); return; }
+      map[gTopicKey(m[1])] = m[2];
+    });
+    if (bad.length) { gEl('hw-links-msg').textContent = 'Check: ' + bad.join(' · ') + ' (use "topic code = https://link")'; gEl('hw-links-msg').className = 'text-xs text-red-700'; return; }
+    try {
+      await state.db.ref('classes/' + className + '/settings/links').set({ off: !gEl('hw-links-on').checked || null, map: Object.keys(map).length ? map : null, at: Date.now() });
+      gEl('hw-links-msg').textContent = 'Saved.'; gEl('hw-links-msg').className = 'text-xs text-green-700';
+    } catch (e) { gEl('hw-links-msg').textContent = gDbError(e); }
+  };
+}
+// ── Admin Panel → Homework tab: class picker, then Homework | Practice ──
+async function hwAdminOpen() {
+  var panel = gEl('admin-homework-tab'); if (!panel) return;
+  if (!panel.dataset.ready) {
+    panel.innerHTML = '<div class="flex flex-wrap items-end gap-3 mb-3"><label class="text-xs text-gray-600">GCSE class<select id="hwa-class" class="block border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[14rem]"></select></label>' +
+      '<div class="flex gap-1 ml-2" role="tablist"><button type="button" class="hwa-tab px-3 py-1.5 rounded-full border text-sm font-semibold" data-t="homework">📚 Homework</button><button type="button" class="hwa-tab px-3 py-1.5 rounded-full border text-sm font-semibold" data-t="practice">✏️ Practice</button></div></div><div id="hwa-body"></div>';
+    panel.dataset.ready = '1';
+    gEl('hwa-class').onchange = function () { HW.adminClass = this.value; if (typeof gcse !== 'undefined') gcse.className = this.value; hwAdminRender(); };
+    panel.querySelectorAll('.hwa-tab').forEach(function (b) { b.onclick = function () { HW.adminTab = b.dataset.t; hwAdminRender(); }; });
+  }
+  var cls = HW.adminClass || (typeof gcse !== 'undefined' && gcse.className) || '';
+  gEl('hwa-class').innerHTML = typeof gcseClassOptions === 'function' ? await gcseClassOptions(cls) : '';
+  if (!cls) { var first = gEl('hwa-class').querySelector('option[value]:not([value=""])'); if (first && gEl('hwa-class').options.length === 2) { cls = first.value; gEl('hwa-class').value = cls; } }
+  HW.adminClass = gEl('hwa-class').value || cls;
+  hwAdminRender();
+}
+async function hwAdminRender() {
+  var body = gEl('hwa-body'); if (!body) return;
+  var tab = HW.adminTab || 'homework';
+  document.querySelectorAll('#admin-homework-tab .hwa-tab').forEach(function (b) { var on = b.dataset.t === tab; b.className = 'hwa-tab px-3 py-1.5 rounded-full border text-sm font-semibold ' + (on ? 'border-[rgb(176,28,35)] bg-[rgb(176,28,35)] text-white' : 'border-gray-300 text-gray-700 bg-white'); });
+  var cls = HW.adminClass;
+  if (!cls) { body.innerHTML = '<p class="text-sm text-gray-500">Choose a GCSE class.</p>'; return; }
+  if (tab === 'practice') {
+    body.innerHTML = '<p class="text-gray-400 text-sm">Loading practice…</p>';
+    var codes = Object.keys((await state.db.ref('classes/' + cls + '/codes').get()).val() || {});
+    var html = await xpClassHtml(cls, codes);
+    if (gEl('hwa-body') !== body || HW.adminTab !== 'practice') return;
+    body.innerHTML = html;
+    body.querySelectorAll('.gcse-profile-link').forEach(function (b) { b.onclick = function () { openGcseProfile(b.dataset.code); }; });
+    return;
+  }
+  return hwClassTabRender(body, cls, {});
+}
+
+// ── Pupil: 📚 Homework page ──
+function hwPupilBadge() {
+  var b = gEl('btn-homework'); if (!b || !state.uid || state.isTeacher || state.isAdmin) return;
+  hwStudentContext().then(function (ctx) {
+    var n = hwOpenList(ctx).length, c = gEl('homework-count');
+    if (c) { c.textContent = n; c.classList.toggle('hidden', !n); }
+  }).catch(function () {});
+}
+async function hwPupilPage() {
+  var m = gEl('modal-hw-list');
+  if (!m) {
+    hwCss();
+    m = document.createElement('div');
+    m.id = 'modal-hw-list';
+    m.className = 'fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-3 sm:p-6 overflow-y-auto';
+    m.innerHTML = '<div class="xp-shell mt-2"><div class="xp-top"><div><h2>My homework</h2><div class="xp-sub">Questions picked for you</div></div><button type="button" id="hwl-close" class="xp-x ml-auto" aria-label="Close">✕</button></div><div id="hwl-body" class="xp-body"></div></div>';
+    document.body.appendChild(m);
+  }
+  m.classList.remove('hidden');
+  gEl('hwl-close').onclick = function () { m.classList.add('hidden'); };
+  var body = gEl('hwl-body');
+  body.innerHTML = '<p class="text-gray-400 text-sm">Loading…</p>';
+  var ctx = await hwStudentContext();
+  var now = Date.now();
+  var all = Object.keys(ctx.homework).map(function (id) { return Object.assign({ id: id }, ctx.homework[id]); }).filter(function (h) { return h.setAt <= now; });
+  var todo = hwOpenList(ctx), done = all.filter(function (h) { return ctx.hw[h.id] && ctx.hw[h.id].doneAt; }).sort(function (a, b) { return ctx.hw[b.id].doneAt - ctx.hw[a.id].doneAt; });
+  var stats = function (h) {
+    var rec = ctx.hw[h.id] || {}, ans = Object.keys(rec.answers || {}).map(function (n) { return rec.answers[n]; }).filter(function (a) { return a && !a.retry; });
+    return { right: ans.filter(function (a) { return a.ok; }).length, n: ans.length, mins: Math.round((rec.ms || 0) / 60000), cleared: rec.cleared || 0, size: rec.size || h.size || HW.size, started: !!rec.startedAt, ans: ans };
+  };
+  var topicsLine = function (h) { var t = GcseCore.asList(h.topics); return t.length ? '<div class="text-xs text-gray-500 mt-0.5">' + gEsc(gtSummary(t, 3)) + '</div>' : (h.mode === 'only' ? '' : '<div class="text-xs text-gray-500 mt-0.5">Mixed topics picked for you</div>'); };
+  var h = '<div class="xp-label" style="margin-top:0">To do</div>';
+  h += todo.length ? todo.map(function (x) {
+    var s = stats(x), late = x.dueAt < now;
+    return '<div class="hwl-todo flex flex-wrap items-center gap-3 rounded-xl border-2 ' + (late ? 'border-red-300 bg-red-50' : 'border-gray-200') + ' px-4 py-3 mb-2"><div class="flex-1 min-w-[12rem]"><div class="font-bold text-gray-900">' + gEsc(x.title) + '</div>' + topicsLine(x) +
+      '<div class="text-xs mt-1 ' + (late ? 'text-red-700 font-semibold' : 'text-gray-600') + '">' + (late ? 'Overdue – was due ' : 'Due ') + gEsc(hwFmtDate(x.dueAt)) + ' · ' + s.cleared + ' of ' + s.size + ' done</div>' +
+      '<div class="h-1.5 bg-gray-100 rounded-full mt-1.5 max-w-xs"><div class="h-1.5 rounded-full bg-green-600" style="width:' + Math.round(s.cleared / s.size * 100) + '%"></div></div></div>' +
+      '<button type="button" class="hwl-go xp-check" data-id="' + gEsc(x.id) + '">' + (s.started ? 'Carry on' : 'Start') + ' →</button></div>';
+  }).join('') : '<p class="text-sm text-gray-600 mb-2">🎉 Nothing to do right now.</p>';
+  h += '<div class="xp-label">Done</div>';
+  h += done.length ? done.map(function (x) {
+    var s = stats(x), pct = s.n ? Math.round(s.right / s.n * 100) : 0;
+    var byKey = {}; s.ans.forEach(function (a) { var k = byKey[a.k] || (byKey[a.k] = { r: 0, n: 0 }); k.n++; if (a.ok) k.r++; });
+    var keys = Object.keys(byKey).sort(function (a, b) { return byKey[a].r / byKey[a].n - byKey[b].r / byKey[b].n; });
+    return '<details class="hwl-done rounded-xl border border-gray-200 mb-2"><summary class="cursor-pointer px-4 py-2.5 flex flex-wrap items-center gap-2"><b class="text-gray-900">' + gEsc(x.title) + '</b><span class="text-xs text-gray-500">' + gEsc(hwFmtDate(ctx.hw[x.id].doneAt)) + ' · ' + s.mins + ' min</span>' +
+      '<span class="ml-auto px-2 py-0.5 rounded-full text-xs font-semibold" style="' + gRag(pct) + '">' + s.right + ' / ' + s.n + ' right first time</span></summary><div class="px-4 pb-3">' +
+      '<table class="w-full text-sm">' + keys.map(function (k) { var v = byKey[k], p2 = Math.round(v.r / v.n * 100); return '<tr class="border-t"><td class="py-1 pr-2">' + gEsc(hwKeyLabel(k).replace(/\s*\([\d.a-z]+\)$/, '')) + '</td><td class="py-1 text-right"><span class="px-1.5 rounded text-xs font-semibold" style="' + gRag(p2) + '">' + v.r + '/' + v.n + '</span></td><td class="py-1 pl-2 text-right">' + (p2 < 70 && typeof gtRevisionLinkHtml === 'function' ? gtRevisionLinkHtml(hwKeyParts(k).topic, 'Revise') : '') + '</td></tr>'; }).join('') + '</table>' +
+      '<button type="button" class="hwl-review mt-2 text-xs px-2.5 py-1 rounded border border-gray-300" data-id="' + gEsc(x.id) + '">Look back at my answers</button><div class="hwl-review-box mt-2"></div></div></details>';
+  }).join('') : '<p class="text-sm text-gray-500">Nothing finished yet.</p>';
+  h += '<div class="xp-label">Across all your homework</div>' + hwMyProgressHtml(ctx.hw, ctx.mastery, ctx.homework);
+  body.innerHTML = h;
+  body.querySelectorAll('.hwl-go').forEach(function (b) { b.onclick = function () { m.classList.add('hidden'); HW.onClose = hwPupilPage; hwOpen(b.dataset.id); }; });
+  body.querySelectorAll('.hwl-review').forEach(function (b) {
+    b.onclick = function () {
+      var rec = ctx.hw[b.dataset.id] || {}, box = b.nextElementSibling;
+      var byId = {}; try { gcseBankUsable().forEach(function (v) { byId[v.row.id] = v.row; }); } catch (e) {}
+      var ans = Object.keys(rec.answers || {}).map(function (n) { return rec.answers[n]; }).filter(Boolean);
+      box.innerHTML = ans.map(function (a, i) {
+        var q = byId[a.qid];
+        return '<div class="border-t py-2 text-sm"><div class="flex gap-2"><span>' + (a.ok ? '✅' : '❌') + '</span><div class="flex-1"><div class="text-gray-900 whitespace-pre-wrap">' + gEsc(q ? q.question : a.qid) + '</div>' +
+          '<div class="text-xs text-gray-500">' + (a.mk != null ? a.mk + ' / ' + a.mx + ' marks' : '') + (a.retry ? ' · second try' : '') + '</div>' +
+          (q && q.markScheme ? '<details class="mt-1"><summary class="cursor-pointer text-xs text-blue-700">Mark scheme</summary><div class="text-xs whitespace-pre-wrap bg-gray-50 rounded p-2 mt-1">' + gEsc(q.markScheme) + '</div></details>' : '') + '</div></div></div>';
+      }).join('') || '<p class="text-xs text-gray-500">No answers saved.</p>';
+      b.remove();
+    };
+  });
+}
+(function () {
+  var wire = function () { var b = gEl('btn-homework'); if (b) b.onclick = hwPupilPage; };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
+  if (typeof updateAuthUI !== 'function') return;
+  var orig = updateAuthUI;
+  updateAuthUI = function (first, last, isAdmin, isTeacher) {
+    var r = orig.apply(this, arguments);
+    var b = gEl('btn-homework');
+    var pupil = !!(state.uid && state.className && !isAdmin && !isTeacher && !state.isTeacher && !state.isAdmin);
+    if (b) b.classList.add('hidden');
+    if (pupil && b) gtPupilIsGcse().then(function (yes) { if (yes && state.uid) { b.classList.remove('hidden'); hwPupilBadge(); } });
+    return r;
+  };
+})();
 // ── H5 needs + "is it helping?" ─────────────────────────────────────────────
 // Needs from mastery: skills with enough evidence and a low rating, weakest first, with their common mistakes.
 function hwNeeds(mastery, hw) {
