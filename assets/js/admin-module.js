@@ -3625,7 +3625,19 @@ async function openStudentApFeedback() {
   content.innerHTML = '<p class="text-gray-400 text-center py-8">Loading AP feedback...</p>';
   modal.classList.remove('hidden');
   try {
-    if (!state.uid || !state.className) throw new Error('You need to be logged into a class.');
+    // The class can still be loading after a refresh: look it up from the code index, then the login session.
+    if (state.uid && !state.className) {
+      try { state.className = await findClassForCode(state.uid); } catch (e) {}
+      if (!state.className) {
+        try {
+          var au = state.auth && state.auth.currentUser;
+          if (au) { var ss = await state.db.ref('studentSessions/' + au.uid + '/className').get(); if (ss.exists()) state.className = ss.val(); }
+        } catch (e) {}
+      }
+      document.getElementById('student-ap-feedback-subtitle').textContent = state.className ? 'Class: ' + state.className : '';
+    }
+    if (!state.uid) throw new Error('Please log in to see your feedback.');
+    if (!state.className) throw new Error('We could not find your class. Log out and log back in with your code, or ask your teacher to check you are in a class.');
     var progressSnap = await state.db.ref('progress/' + state.uid + '/assessments').get();
     var feedbackSnap = await state.db.ref('classes/' + state.className + '/apFeedback').get();
     var assessments = progressSnap.exists() ? progressSnap.val() : {};
