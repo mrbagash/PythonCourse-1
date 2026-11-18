@@ -37,6 +37,8 @@ function gRag(pct) {
   if (pct >= 40) return 'background:#fef3c7;color:#92400e';
   return 'background:#fee2e2;color:#991b1b';
 }
+// Firebase rejects undefined anywhere in a save; a JSON round-trip drops those keys (nulls are kept).
+function gcseClean(o) { return JSON.parse(JSON.stringify(o)); }
 function gDbError(e) {
   var msg = (e && e.message) || String(e);
   if (/permission/i.test(msg)) {
@@ -250,7 +252,7 @@ async function gcseSyncOnlineResults(testId) {
       n++;
     }
   }
-  if (n) await state.db.ref().update(updates);
+  if (n) await state.db.ref().update(gcseClean(updates));
   return n;
 }
 
@@ -1058,7 +1060,7 @@ async function gcseSaveImport(t, imp) {
     t.questions = qs; t.notes = notes;
   }
   try {
-    await state.db.ref().update(updates);
+    await state.db.ref().update(gcseClean(updates));
     var importOut = gEl('gcse-import-out');
     if (importOut) importOut.innerHTML = '';
     gcse.pendingImport = null;
@@ -1309,7 +1311,7 @@ function gcseFeedbackTabHtml(t, rows) {
 function gcseReleaseTabHtml(t, rows, fbInfo) {
   var released = fbInfo && fbInfo.released;
   return '<div class="max-w-2xl space-y-3"><div class="rounded-lg border p-4 ' + (released ? 'border-green-200 bg-green-50' : 'border-gray-200') + '">' +
-    (released ? '<b class="text-green-800">Released ' + new Date(fbInfo.releasedAt).toLocaleString('en-GB') + '.</b> Students can see it under <b>Me ▾ → My feedback</b>. Release again after changing marks.' :
+    (released ? '<b class="text-green-800">Released ' + new Date(fbInfo.releasedAt).toLocaleString('en-GB') + '.</b> Students can see it under <b>AP Feedback</b>. Release again after changing marks.' :
       '<b>Not released yet.</b> Students cannot see their results until you release them.') + '</div>' +
     '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-2"><div class="font-semibold">Each student will see:</div><ul class="list-disc ml-5 text-gray-700">' +
       '<li>their score, and what went well / even better if by topic</li><li>Paper 1 vs Paper 2 and which paper to focus on</li><li>a <b>Fix my mistakes</b> practice button for their weak topics</li><li>the topics the class will revisit</li></ul>' +
@@ -1483,7 +1485,7 @@ async function gcseRelease(t, rows) {
   });
   try {
     // Firebase rejects undefined anywhere in an update; a JSON round-trip drops those keys (nulls are kept).
-    await state.db.ref().update(JSON.parse(JSON.stringify(updates)));
+    await state.db.ref().update(gcseClean(updates));
     gcseStatus('Feedback released to ' + t.className + (t.showGrades ? ' (with grades)' : ' (grades hidden)') + '. ' +
       (redoInfo ? 'Each pupil can now redo the questions they dropped marks on – ' + redoInfo.ready + ' of ' + redoInfo.total + ' questions have a new version ready.' : ''));
   } catch (e) { gcseStatus(gDbError(e), true); }

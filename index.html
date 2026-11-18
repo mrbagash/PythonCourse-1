@@ -434,25 +434,28 @@
     </div>
     <div id="lesson-tabs" class="flex gap-1 overflow-x-auto flex-1 min-w-0 mx-3"></div>
     <div class="flex items-center gap-2 shrink-0">
-      <select id="year-group-select" class="jhncc-focus text-sm border border-gray-300 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none"></select>
-      <select id="course-select" class="jhncc-focus text-sm border border-gray-300 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none"></select>
-      <span id="user-label" class="text-sm text-gray-500 truncate max-w-[9rem] hidden lg:inline"></span>
       <button id="btn-login"  class="text-sm px-3 py-1 rounded border border-gray-300 hover:bg-gray-50">Login</button>
-      <button id="btn-logout" class="hidden text-sm px-3 py-1 rounded border border-gray-300 hover:bg-gray-50">Logout</button>
       <button id="btn-join-quiz" class="jhncc-secondary hidden text-sm px-3 py-1 rounded border">&#x1F3AE; Join Quiz/AP</button>
-      <div id="me-menu-wrap" class="relative hidden">
-        <button id="btn-me" type="button" class="jhncc-secondary relative text-sm px-3 py-1 rounded border" aria-haspopup="true" aria-expanded="false">&#x1F464; Me &#x25BE;<span id="me-count" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center"></span></button>
-        <div id="me-menu" class="hidden absolute right-0 top-full mt-1 z-[80] bg-white border border-gray-200 rounded-lg shadow-lg p-1 min-w-[190px]">
-          <button id="btn-ap-feedback" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x1F4DD; My feedback</button>
+      <button id="btn-ap-feedback" type="button" class="jhncc-secondary hidden text-sm px-3 py-1 rounded border whitespace-nowrap">&#x1F4DD; AP Feedback</button>
+      <button id="btn-notify" type="button" class="hidden relative z-[70] text-lg leading-none px-2 py-1 rounded hover:bg-gray-100" title="Notifications" aria-label="Notifications" aria-expanded="false">&#x1F514;<span id="notify-count" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center"></span></button>
+      <button id="btn-admin"  class="jhncc-primary hidden text-sm px-3 py-1 rounded">Admin</button>
+      <div id="me-menu-wrap" class="relative">
+        <button id="btn-me" type="button" class="relative text-xl leading-none px-2 py-1 rounded border border-gray-300 hover:bg-gray-50" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false">&#x2630;<span id="me-count" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center"></span></button>
+        <div id="me-menu" class="hidden absolute right-0 top-full mt-1 z-[80] bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-60">
+          <div id="user-label" class="text-sm font-semibold text-gray-700 px-2 pb-1 truncate"></div>
+          <label class="block text-xs text-gray-500 px-2 mt-1">Year group</label>
+          <select id="year-group-select" class="jhncc-focus w-full text-sm border border-gray-300 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none mb-1"></select>
+          <label class="block text-xs text-gray-500 px-2">Course</label>
+          <select id="course-select" class="jhncc-focus w-full text-sm border border-gray-300 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none mb-1"></select>
+          <div class="border-t border-gray-100 my-1"></div>
           <button id="btn-my-progress" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x1F4C8; My progress</button>
           <button id="btn-plc" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x2705; My checklist</button>
           <button id="btn-homework" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x1F4DA; Homework <span id="homework-count" class="hidden ml-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center inline-block"></span></button>
           <button id="btn-practise" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x270F;&#xFE0F; Practise</button>
           <button id="btn-report" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100">&#x1F4C4; Export report</button>
+          <button id="btn-logout" type="button" class="me-item hidden text-sm px-3 py-1.5 rounded hover:bg-gray-100 text-red-700">&#x21AA; Logout</button>
         </div>
       </div>
-      <button id="btn-notify" type="button" class="hidden relative z-[70] text-lg leading-none px-2 py-1 rounded hover:bg-gray-100" title="Notifications" aria-label="Notifications" aria-expanded="false">&#x1F514;<span id="notify-count" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center"></span></button>
-      <button id="btn-admin"  class="jhncc-primary hidden text-sm px-3 py-1 rounded">Admin</button>
     </div>
   </div>
   <div id="step-bar" class="flex gap-1 px-4 py-2 bg-yellow-50/40 border-t border-yellow-100 overflow-x-auto"></div>
@@ -1599,7 +1602,7 @@
 <script src="assets/js/binary-module.js?v=20260624"></script>
 <script src="assets/js/pyscratch-lesson.js?v=20260706a"></script>
 <script src="assets/js/app-core.js?v=20260706a"></script>
-<script src="assets/js/auth-module.js?v=20261124a"></script>
+<script src="assets/js/auth-module.js?v=20261124b"></script>
 <script src="assets/js/admin-module.js?v=20261123a"></script>
 <script src="assets/js/quiz-state.js?v=20261117d"></script>
 <script src="assets/js/assessment-module.js?v=20261121a"></script>
@@ -1638,7 +1641,7 @@
 <script src="assets/js/gcse-bank-x-multi-2.js?v=20261121a"></script>
 <script src="assets/js/gcse-bank-x-zz-eou1.js?v=20261122a"></script>
 <script src="assets/js/class-page-module.js?v=20261119a"></script>
-<script src="assets/js/gcse-module.js?v=20261124a"></script>
+<script src="assets/js/gcse-module.js?v=20261124b"></script>
 <script src="assets/js/gcse-marking-module.js?v=20261121a"></script>
 <script src="assets/js/gcse-wcf-module.js?v=20261122a"></script>
 <script src="assets/js/gcse-topictree.js?v=20261123b"></script>
@@ -1656,7 +1659,7 @@
   var wrap = document.getElementById('me-menu-wrap'), btn = document.getElementById('btn-me'), menu = document.getElementById('me-menu');
   function setOpen(o) { menu.classList.toggle('hidden', !o); btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }
   btn.addEventListener('click', function (e) { e.stopPropagation(); setOpen(menu.classList.contains('hidden')); });
-  menu.addEventListener('click', function () { setOpen(false); });
+  menu.addEventListener('click', function (e) { if (e.target.closest('button')) setOpen(false); });
   document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) setOpen(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
   var hc = document.getElementById('homework-count'), mc = document.getElementById('me-count');
