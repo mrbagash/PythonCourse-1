@@ -798,6 +798,8 @@ function updateAuthUI(first, last, isAdmin, isTeacher) {
   document.getElementById('btn-logout').classList.toggle('hidden', !show);
   document.getElementById('btn-report').classList.toggle('hidden', !show||isAdmin||isTeacher);
   document.getElementById('btn-ap-feedback').classList.toggle('hidden', !show||isAdmin||isTeacher);
+  var meWrap = document.getElementById('me-menu-wrap');
+  if (meWrap) meWrap.classList.toggle('hidden', !show||isAdmin||isTeacher);
   document.getElementById('btn-admin').classList.toggle('hidden',  !isAdmin&&!isTeacher);
   document.getElementById('btn-admin').textContent = isTeacher ? 'Teacher Panel' : 'Admin';
   var label = show ? ((first + ' ' + last).trim() || String(state.uid || '')) : '';

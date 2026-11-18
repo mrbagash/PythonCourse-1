@@ -1309,7 +1309,7 @@ function gcseFeedbackTabHtml(t, rows) {
 function gcseReleaseTabHtml(t, rows, fbInfo) {
   var released = fbInfo && fbInfo.released;
   return '<div class="max-w-2xl space-y-3"><div class="rounded-lg border p-4 ' + (released ? 'border-green-200 bg-green-50' : 'border-gray-200') + '">' +
-    (released ? '<b class="text-green-800">Released ' + new Date(fbInfo.releasedAt).toLocaleString('en-GB') + '.</b> Students can see it under <b>AP Feedback</b>. Release again after changing marks.' :
+    (released ? '<b class="text-green-800">Released ' + new Date(fbInfo.releasedAt).toLocaleString('en-GB') + '.</b> Students can see it under <b>Me ▾ → My feedback</b>. Release again after changing marks.' :
       '<b>Not released yet.</b> Students cannot see their results until you release them.') + '</div>' +
     '<div class="border border-gray-200 rounded-lg p-4 text-sm space-y-2"><div class="font-semibold">Each student will see:</div><ul class="list-disc ml-5 text-gray-700">' +
       '<li>their score, and what went well / even better if by topic</li><li>Paper 1 vs Paper 2 and which paper to focus on</li><li>a <b>Fix my mistakes</b> practice button for their weak topics</li><li>the topics the class will revisit</li></ul>' +
@@ -1482,7 +1482,8 @@ async function gcseRelease(t, rows) {
     };
   });
   try {
-    await state.db.ref().update(updates);
+    // Firebase rejects undefined anywhere in an update; a JSON round-trip drops those keys (nulls are kept).
+    await state.db.ref().update(JSON.parse(JSON.stringify(updates)));
     gcseStatus('Feedback released to ' + t.className + (t.showGrades ? ' (with grades)' : ' (grades hidden)') + '. ' +
       (redoInfo ? 'Each pupil can now redo the questions they dropped marks on – ' + redoInfo.ready + ' of ' + redoInfo.total + ' questions have a new version ready.' : ''));
   } catch (e) { gcseStatus(gDbError(e), true); }
@@ -1729,7 +1730,7 @@ async function gcseLoadBankFromDrive() {
 }
 function gcsePracticeItem(v) {
   var r = v.row;
-  return { id: r.id, type: r.type, q: r.question, options: r.options, answerIndex: r.answerIndex, marks: r.marks, rules: r.rules || '', markScheme: r.markScheme || '',
+  return { id: r.id, type: r.type, q: r.question, options: r.options || null, answerIndex: r.answerIndex == null ? null : r.answerIndex, marks: r.marks, rules: r.rules || '', markScheme: r.markScheme || '',
     topics: r.topics, command: r.command || '', codes: r.codes || [], difficulty: r.difficulty || '' };
 }
 // Quiz-usable bank questions for these topics (a spec point includes its sub-topics).
